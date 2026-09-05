@@ -4,8 +4,12 @@ Master reference for objective, architecture, design decisions and progress.
 Working notes live here; [`README.md`](README.md) is the public front door and
 [`seed/story.md`](seed/story.md) is the measured demo narrative.
 
-**Status:** data plane complete and tested (85 tests, 5 commits). Blocked at the
-Phase 1 verification gate pending Grafana Cloud credentials.
+**Status:** data plane in a live stack. 97 tests. Grafana Cloud stack
+`your-stack` (region `prod-ap-southeast-1`) seeded. **Traces and metrics
+verified** — the thesis join resolves, SEQ0420 stands out. **Logs not landing**:
+the OTLP gateway 204s them but nothing is queryable in Loki (see §9). GCP /
+Vertex AI reachable (`gemini-2.5-flash`). Private repo:
+`github.com/WenBin-Y/turnaround`.
 **Last updated:** 2026-09-06.
 
 ---
@@ -236,6 +240,22 @@ counter that never accumulates, a timestamp in the wrong unit, a label that
 explodes cardinality — are invisible until the data is already in the stack and
 awkward to remove.
 
+**History is compressed into the ingestion window, not into the data.** Hosted
+Mimir rejects any sample older than a ~1 h out-of-order window
+(`err-mimir-sample-timestamp-too-old`; measured on `your-stack`: 65 min
+accepted, 90 min refused). Live OTLP push therefore cannot carry a five-month
+backfill as-is. [`bridge/timewarp.py`](bridge/timewarp.py) applies a **monotonic
+affine map** at the single `datetime → unix_nano` seam in `emit.py` and
+`metrics.py`: `[earliest .. now]` onto `[now − window .. now]`, default window
+45 min. The *simulation* stays in real calendar time — every day/week bucket,
+every overlap argument untouched — so only the time axis scales; every series
+keeps its exact shape. Queries use proportional ranges: `increase(...[14d])`
+becomes `increase(...[5m])` (scale ≈ 0.0002, 1 real day ≈ 17.6 s). Off unless
+`seed.populate` configures it; `--compress 0` restores real timestamps for a
+self-hosted stack with the window widened. 12 tests in
+[`tests/test_timewarp.py`](tests/test_timewarp.py) pin endpoints, monotonicity
+and identity-when-off.
+
 ### Simulation decisions
 
 **A retake does not buy calendar.** When a note lands, an artist does not get
@@ -336,14 +356,38 @@ punchline. The real story is stronger.
 - **Simulation** — the show, the two story beats, the crunch mechanism.
 - **Seeder driver** — full write path with `--dry-run`.
 
-A dry run produces **1,453 spans, 1,474 correlated log lines, 5,910 metric
-points** without touching the network.
+A dry run produces **1,454 spans, 1,476 correlated log lines, 5,917 metric
+points** without touching the network. The same run against `your-stack`
+completes in ~4 s.
+
+### Verified in the live stack (2026-09-06)
+
+- **Traces** — `{ .production.shot_id = "SEQ0420_SH0100" }` returns one trace,
+  department spans, comp spans in error status. Tempo accepts the historical
+  span times directly (no compression needed for traces, but the seeder warps
+  them anyway so the trace and metric time axes align).
+- **Metrics** — all ten `turnaround_*` series present. The thesis join
+  (`increase(render_core_hours[5m]) / increase(task_iterations[5m])`, by
+  sequence) puts **SEQ0420 well above every other sequence**; render-waste
+  totals are **~11× concentrated** on SEQ0420. Correlation holds.
+- **Crew load** — `turnaround_artist_hours_logged` by pool/department present;
+  comp-pool-1/2 highest. Floor behaviour (`di-pool-1` suppression) is an
+  alert-layer concern, still to wire in Phase 3.
 
 ### Blocked
 
-**Phase 1 verification gate.** Requires Grafana Cloud credentials. Nothing
-downstream should be built until the correlation is confirmed in a real stack —
-dashboards, ML forecasts and every agent query assume it holds.
+**Logs are not reaching Loki.** The OTLP gateway returns **204** for a
+well-formed `/v1/logs` payload (auth and `logs:write` scope are fine — an empty
+POST also 204s), but no `turnaround-bridge` stream — in fact no stream at all —
+is queryable through the `grafanacloud-logs` datasource in any window. Leading
+suspicion: that datasource points at `logs-prod-020.grafana.net` while the rest
+of the stack is `*-prod-ap-southeast-1`, so gateway-ingested logs may land in a
+Loki tenant the datasource does not read; alternatively Loki drops them
+post-gateway on a limit. Traces carry the full stage history as a fallback, so
+this does not block Phase 3, but the "every event exists as a Loki line too"
+redundancy is currently one-legged. **Next:** confirm the stack's real Loki
+push/read endpoints from the Connections page; if it is a routing mismatch,
+repoint the datasource; otherwise open a Grafana Cloud support ticket.
 
 ### Not started
 
