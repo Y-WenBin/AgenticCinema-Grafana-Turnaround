@@ -10,6 +10,8 @@ dependencies = [
   # Google Cloud AI — the only permitted AI runtime for this hackathon track
   "google-adk>=1.0.0",
   "google-genai>=1.0.0",
+  "mcp>=1.9.0,<2",         # MCP client for ADK's MCPToolset; ADK 2.8 predates the mcp 2.x API rename
+
   # OpenTelemetry: one OTLP gateway carries traces, logs and metrics
   "opentelemetry-sdk>=1.29.0",
   "opentelemetry-exporter-otlp-proto-http>=1.29.0",

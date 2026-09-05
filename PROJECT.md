@@ -4,10 +4,16 @@ Master reference for objective, architecture, design decisions and progress.
 Working notes live here; [`README.md`](README.md) is the public front door and
 [`seed/story.md`](seed/story.md) is the measured demo narrative.
 
-**Status:** Phase 1 gate **passed** in a live stack. 97 tests. Grafana Cloud
-stack `niftysamosa2162` (region `prod-ap-southeast-1`) seeded; one `shot_id`
-resolves across **traces, logs and metrics**, and the thesis join puts SEQ0420
-well above every other sequence. GCP / Vertex AI reachable (`gemini-2.5-flash`).
+**Status:** Phases 1–3 **passed** in a live stack. **Phase 4 in progress** —
+the `agent/` tier is built and wired: a deterministic five-step ADK pipeline
+(three read-only analysts on `mcp-grafana --disable-write`, a gated Remediator,
+a synthesis step) answers demo questions cold against Grafana Cloud MCP with a
+recorded tool timeline. 133 tests. Two of the four demo questions
+(`why is SEQ0420 slipping / what is it costing`, `who is heading for crunch`)
+verified end to end; the remediation/write-back path is wired and gated but was
+mid-verification when the session paused. Grafana Cloud stack `niftysamosa2162`
+(region `prod-ap-southeast-1`). GCP / Vertex AI reachable (`gemini-2.5-flash`;
+`gemini-2.5-pro` is 429 quota-locked on this project, so everything runs flash).
 Private repo: `github.com/WenBin-Y/turnaround`.
 **Last updated:** 2026-09-06.
 
@@ -187,12 +193,27 @@ Everything else in the product follows from that one relabel.
 | [`seed/model.py`](seed/model.py) | 414 | The simulation |
 | [`seed/populate.py`](seed/populate.py) | 254 | Driver: history → spans, logs, metrics; `--dry-run` |
 | [`seed/story.md`](seed/story.md) | 59 | The measured demo narrative |
+| [`grafana/build.py`](grafana/build.py) · [`grafana/provision.py`](grafana/provision.py) | — | Dashboards + idempotent pusher (Phase 3) |
+| [`grafana/alerts/build.py`](grafana/alerts/build.py) · [`grafana/ml/build.py`](grafana/ml/build.py) | — | Alert rules and Grafana ML jobs (Phase 3) |
+| [`agent/config.py`](agent/config.py) | 130 | `.env` loader, Vertex bootstrap, model + datasource-UID settings, locates `mcp-grafana` |
+| [`agent/vocabulary.py`](agent/vocabulary.py) | 175 | Ontology → prompt: metric catalogue, PromQL recipes (compressed base + `last_over_time` wrapper), tool-calling rules, privacy + time-base rules |
+| [`agent/mcp_grafana.py`](agent/mcp_grafana.py) | 100 | `McpToolset` factories: read-only (`--disable-write`) narrowed per analyst; write (`--enabled-tools annotations,incident`) for the Remediator |
+| [`agent/timeline.py`](agent/timeline.py) | 130 | `ToolTimeline` — records every tool call (agent, tool, args, ms, ok), marks the Grafana MCP ones. The Phase 4 gate's evidence |
+| [`agent/approval.py`](agent/approval.py) | 150 | `ApprovalGate` + `EvidenceLedger`; `Approver` protocol (`AutoApprover`, `CliApprover`); blocks every mutating call until a human approves |
+| [`agent/writeback.py`](agent/writeback.py) | 135 | Kitsu write-back behind a `Protocol`: `RecordingKitsu` (JSONL + Grafana annotation) now, `GazuKitsu` when a studio instance exists |
+| [`agent/analysts.py`](agent/analysts.py) | 175 | `schedule_analyst`, `farm_analyst`, `crunch_guardian` — read-only LlmAgents, each `output_key` feeds the ledger |
+| [`agent/remediator.py`](agent/remediator.py) | 110 | The one write-capable agent; every tool call goes through the gate + timeline |
+| [`agent/producer.py`](agent/producer.py) | 120 | `build_system()` → `SequentialAgent`[schedule, farm, crunch, remediator, synthesis] + shared timeline/gate/ledger |
+| [`agent/run.py`](agent/run.py) | 90 | CLI: `uv run python -m agent.run [--approve\|--interactive] "<question>"` |
 
-Tests: 85 across five files, ~700 lines.
+Tests: 133 across twelve files.
 
-Dependencies: `google-adk==2.8.0`, `google-genai==2.22.0`,
+Dependencies: `google-adk==2.8.0`, `google-genai==2.22.0`, `mcp==1.29.1`
+(pinned `<2`; ADK predates the mcp 2.x API rename),
 `opentelemetry-sdk==1.42.1`, `gazu==1.2.2`, `fastapi==0.141.1`, `pyyaml==6.0.3`.
-Python 3.12 via `uv`.
+Python 3.12 via `uv`. The `mcp-grafana` binary is a separate install:
+`brew install mcp-grafana` (1.3.0). `agent/config.py` finds it on PATH or at
+`/opt/homebrew/bin`.
 
 ---
 
@@ -429,10 +450,90 @@ per-iteration cost elevated since before the note — the story's real argument.
 The Prophet charts are infrastructure-complete but need the deployment's
 continuous history to render.
 
+### Phase 4 — MCP wiring + the agents (2026-09-06, in progress)
+
+Everything under `agent/`. `mcp-grafana` (OSS, `brew install`, 1.3.0) runs as a
+**stdio subprocess** ADK spawns and owns — no ports. Two privilege tiers, both
+enforced by how the server is started, not by prompt:
+
+- **Analysts** → `mcp-grafana --disable-write`, further narrowed with
+  `tool_filter` (Prometheus + Loki + annotations + alerts; FarmAnalyst also
+  Tempo). A prompt-injected "change X" has nothing to call.
+- **Remediator** → `mcp-grafana --enabled-tools annotations,incident`. Can
+  create/update an annotation or add incident activity — nothing else. Every
+  call still passes `ApprovalGate.before_tool` first.
+
+**The pipeline is deterministic, not model-routed.** Flash, asked to "consult
+the right specialists then synthesise", reliably stopped after one and echoed
+it. So `build_system()` returns a `SequentialAgent`: `schedule_analyst →
+farm_analyst → crunch_guardian → remediator → synthesis`. Every question runs
+the whole board (a few extra flash calls; a demo that behaves the same each
+take — Risks table, "agent non-determinism on camera"). Each analyst writes its
+answer to a distinct `output_key`; an `after_agent_callback` copies that into
+the `EvidenceLedger` the approval gate shows, so the evidence chain is built
+without a coordinator remembering to.
+
+**The approval gate.** `WRITE_TOOLS` (annotations, incidents, `kitsu_write_back`)
+are intercepted; the gate renders the proposed write + the full evidence chain,
+asks the `Approver` (`AutoApprover(approve=False)` default, `CliApprover` for
+`--interactive`, `--approve` to auto-yes), and on a "no" returns a
+`status: "blocked"` dict the model is told to report rather than retry. Every
+decision is kept in `gate.decisions` for the console and the write-up.
+
+**Kitsu write-back** is behind a `Protocol`. `RecordingKitsu` (the default)
+appends each write to `agent/_writeback.jsonl` *and* drops a Grafana annotation
+so the loop closes on the same dashboards the evidence came from. `GazuKitsu` is
+the real path, selected only when `TURNAROUND_KITSU_LIVE` is set and `KITSU_URL`
+is non-loopback; it never raises into the agent.
+
+**Verified end to end (live stack + Vertex):**
+
+- *"Why is SEQ0420 slipping, and what is it costing in artist-days?"* — both
+  analysts ran, **9 real Grafana MCP calls**, every number in the evidence
+  chain carries the exact PromQL behind it: JOIN 4.3 core-h/comp-iteration vs
+  ~2.2, waste ~44 core-h, frame-failure 9.4%, `frame 118` cache-miss quoted
+  from Loki, director note found. Cost ≈ 65 artist-days/week of comp overtime,
+  arithmetic shown.
+- *"Who is heading for crunch, and when?"* — `IN CRUNCH NOW (>60h): comp-pool-1
+  88.8h, comp-pool-2 85.1h, lighting-pool-2 63.2h`. `di-pool-1` (2 people)
+  correctly absent — the floor join holds through the agent.
+
+**Findings that shaped it (bugs/wrong assumptions, not preferences):**
+
+- **A bare instant query at `now` returns nothing.** The compressed window ends
+  when the seeder finishes; minutes later the newest sample is outside
+  Prometheus's 5-minute instant lookback. Every "current state" recipe is
+  wrapped `last_over_time((<expr>)[2h:])` — the same trick the alert rules use.
+- **`gemini-2.5-pro` is 429 quota-locked on this project.** First call,
+  `RESOURCE_EXHAUSTED`. Everything runs `gemini-2.5-flash`;
+  `TURNAROUND_GEMINI_MODEL_PRO` opts the synthesis/remediator up if quota lands.
+- **ADK aborts the whole run** with `ValueError: Tool 'x' not found` if a model
+  calls a tool outside its `tool_filter`. Not worth risking on camera to save
+  tool-schema tokens, so all three analysts share one broad read core.
+- **`mcp` 2.x renamed the SDK API**; ADK 2.8 needs `mcp<2`. Pinned `1.29.1`.
+- `SequentialAgent` is deprecated in ADK 2.8 for a `Workflow` type that "cannot
+  yet be used as an LlmAgent sub-agent" — so `SequentialAgent` is still correct
+  here. Revisit when `Workflow` composes.
+
+**Still to close before the Phase 4 gate is met:**
+
+- The remediation/write-back path (`agent.run --approve "what do I change…"`)
+  was mid-verification when the session paused: the pipeline reaches the
+  Remediator, the gate fires, `kitsu_write_back` and `create_annotation` are
+  called — last fix was making `default_writeback` ignore the `.env.example`
+  loopback `KITSU_URL` so `RecordingKitsu` is used. Needs one clean run to
+  confirm the annotation lands and the JSONL row is written.
+- Demo questions 2 (*"what is it costing in artist-days"* on its own) and 4
+  (*"what do I change to avoid both"*) want one more pass each for answer
+  polish.
+- Cloud Traces MCP: `mcp-grafana` 1.3 ships `tempo_*` tools in the default set
+  (PROJECT.md §6 said they were on a separate endpoint — no longer true), so the
+  FarmAnalyst can query traces directly. Not yet exercised in a live run.
+
 ### Not started
 
-MCP wiring · the four agents · approval gate · Kitsu write-back · supervisor
-console · AI Observability instrumentation · Cloud Run deploy · demo video.
+Supervisor console · AI Observability instrumentation · Cloud Run deploy ·
+demo video.
 
 ### Deferred by decision
 
@@ -454,9 +555,33 @@ time allows.
 ```bash
 cd /Users/wenbin/turnaround
 uv sync --group dev
-uv run pytest                                  # 85 tests
+brew install mcp-grafana                       # 1.3.0; the agent tier needs it
+uv run pytest -q                               # 133 tests (hermetic; no network)
 TURNAROUND_PSEUDONYM_SALT=dev uv run python -m seed.populate --dry-run
 ```
+
+### Restarting a session (what to do first)
+
+1. `.env` is git-ignored and holds every live credential — it must already be on
+   the machine. `.secrets/gcp-sa.json` (the Vertex service-account key) likewise.
+   If they are missing, see `.env.example` and §10 Configuration.
+2. `brew install mcp-grafana` if the binary is gone (`which mcp-grafana`).
+3. **Re-seed before any agent run** — the compressed history sits in a
+   ~45-minute window ending at seed time and ages out of the queries after
+   roughly an hour:
+   ```bash
+   set -a && . ./.env && set +a && uv run python -m seed.populate
+   ```
+4. Ask a question (loads `.env` itself; a plain run never mutates the stack):
+   ```bash
+   uv run python -m agent.run "Why is SEQ0420 slipping, and what is it costing in artist-days?"
+   uv run python -m agent.run "Who is heading for crunch, and when?"
+   uv run python -m agent.run --approve     "What do I change to avoid both?"   # auto-approves writes
+   uv run python -m agent.run --interactive "What do I change to avoid both?"   # prompts per write
+   ```
+   Output is the synthesised answer, then the tool timeline (every Grafana MCP
+   call, `*`-marked), then the approval decisions.
+5. Pick Phase 4 back up from §9 "Still to close before the Phase 4 gate is met".
 
 ### Configuration
 
@@ -538,8 +663,8 @@ turnaround_artist_hours_logged{department="comp"}
 |---|---|---|
 | 1 ✅→⏸ | Data plane | **Correlation confirmed in a real stack** |
 | 2 ✅ | The show | Story present and measured |
-| 3 | Dashboards; ML forecasts (delivery date, weekly hours); outlier detectors; alert rules | Forecast differs from plan; crew alert fires on comp-pool-2 |
-| 4 | `mcp-grafana` read-only + write instances; Cloud Traces MCP; four ADK agents; approval gate; Kitsu write-back | Four demo questions answered cold, tool timeline showing real MCP calls |
+| 3 ✅ | Dashboards; ML forecasts (delivery date, weekly hours); outlier detectors; alert rules | Forecast differs from plan; crew alert fires on comp-pool-2 |
+| 4 🔨 | `mcp-grafana` read-only + write instances; Cloud Traces MCP; ADK pipeline (3 analysts + gated remediator + synthesis); approval gate; Kitsu write-back | Four demo questions answered cold, tool timeline showing real MCP calls — **2 of 4 verified**, write-back path mid-verification |
 | 5 | Supervisor console — Crew Load hero, evidence chain, approval queue | Judges can drive it |
 | 6 | AI Observability instrumentation; Cloud Run deploy | Full demo against the public URL in a clean browser profile |
 | 7 | Video, README, Devpost | Submitted with hours to spare |

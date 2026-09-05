@@ -7,6 +7,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 seed/fixtures/*.json
+agent/_writeback.jsonl
 *.log
 .DS_Store
 
