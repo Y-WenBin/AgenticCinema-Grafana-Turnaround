@@ -80,8 +80,12 @@ Kitsu or Grafana.
 
 ## Status
 
-Under active development. See [`bridge/`](bridge/) for the ontology and privacy
-layer, which are complete and tested.
+Under active development.
+
+- [`bridge/`](bridge/) — ontology, privacy invariants, OTLP emitter. Complete and tested.
+- [`seed/`](seed/) — the simulated show. Complete; see [`seed/story.md`](seed/story.md)
+  for what the generated data actually shows, measured rather than asserted.
+- Next: metric backfill, dashboards and ML forecasts, then the agent layer.
 
 ## Development
 
@@ -92,10 +96,22 @@ uv run pytest
 
 ## Data provenance
 
-Turnaround runs against **real Kitsu and OpenCue instances** with generated
-production history — a scripted show of ~200 shots over 10 weeks, seeded
-deterministically. The records and jobs are real; the show is invented. Nothing
-here is derived from any studio's actual production data.
+The show is **invented**: *Nightfall*, 200 shots over ~21 weeks, generated
+deterministically by [`seed/model.py`](seed/model.py). Nothing here derives from
+any studio's real production data.
+
+The generator simulates a *mechanism* rather than writing in a punchline. Two
+ordinary perturbations — a cache regression and a director note — are applied to
+a healthy show, and the iteration counts, render waste and crew hours are
+whatever falls out. Remove a beat from [`seed/show.yaml`](seed/show.yaml) and the
+numbers move on their own; forecasting a hard-coded constant would prove nothing.
+
+Job names follow OpenCue's real `<show>-<shot>-<user>_<name>` convention and are
+round-tripped through the production parser in the test suite, so the join is
+exercised on generated data exactly as it would be on a real farm.
+
+Source adapters sit behind an interface so live Kitsu and OpenCue instances drop
+in without a rewrite.
 
 ## Licence
 

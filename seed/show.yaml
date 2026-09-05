@@ -1,0 +1,123 @@
+# "Nightfall" -- an invented limited series used to generate production history.
+#
+# This file is a *declaration*, not a script. The dynamics the demo depends on
+# (comp iterations climbing to ~6x, the comp pool trending toward unsustainable
+# hours, delivery slipping past its date) are not written down here as outcomes.
+# They emerge from the simulation in seed/model.py when the story beats below
+# perturb an otherwise healthy production. If a beat is removed, the numbers
+# move on their own -- which is the only way the forecasts mean anything.
+
+show:
+  slug: nightfall
+  title: Nightfall
+  # Dates are relative to "now" so the dataset never goes stale. A demo pinned
+  # to absolute dates looks abandoned a fortnight later, and a forecast over
+  # history that stops months ago forecasts nothing.
+  #
+  # ~21 weeks of history: the production has to have been running long enough
+  # that departments overlap. A show where every shot enters at once moves in
+  # lockstep waves and every department is either drowning or idle, which is
+  # not what a studio looks like.
+  start_days_before_now: 146
+  delivery_days_after_now: 19
+  seed: 20260906  # fixed: a reproducible show is what makes a demo trustworthy
+  # Fraction of elapsed production time over which shots enter the pipeline.
+  # Tuned empirically: too low and the whole show moves in lockstep and has
+  # already finished by `now`, leaving no remaining work for a forecast to be
+  # about; too high and act three has not reached comp, where the story is.
+  # At 0.84 the show sits ~81% delivered with act three live in comp.
+  entry_span_fraction: 0.84
+
+# Baseline effort per department, in working days for one pass at complexity 1.0.
+# `render_hours` is farm time per iteration; departments without it never touch
+# the farm, so they can never show render waste.
+departments:
+  previz:   { days: 1.5, spread: 0.3 }
+  layout:   { days: 2.5, spread: 0.4 }
+  anim:     { days: 5.0, spread: 1.2 }
+  fx:       { days: 6.0, spread: 1.8, render_hours: 5.5 }
+  lighting: { days: 4.0, spread: 0.9, render_hours: 6.0 }
+  comp:     { days: 3.0, spread: 0.8, render_hours: 2.2 }
+  di:       { days: 0.5, spread: 0.1 }
+
+# Probability a completed pass is sent back. Comp absorbs most creative notes
+# because it is last and cheapest to re-request -- which is exactly why comp
+# pools are where crunch lands.
+rework:
+  base_retake_rate:
+    previz: 0.30
+    layout: 0.12
+    anim: 0.22
+    fx: 0.20
+    lighting: 0.18
+    comp: 0.28
+    di: 0.05
+  max_iterations: 8
+
+vendors:
+  in-house:  { turnaround_multiplier: 1.00, capacity: 40 }
+  vendor-a:  { turnaround_multiplier: 1.15, capacity: 26 }
+  vendor-b:  { turnaround_multiplier: 1.30, capacity: 22 }
+
+# Pools are the unit of crew-load reporting. Anything under three people is
+# suppressed by bridge/privacy.py -- di-pool-1 exists precisely so the demo can
+# show that suppression working rather than merely claiming it.
+pools:
+  previz-pool-1:   { department: previz,   vendor: in-house, artists: 3 }
+  layout-pool-1:   { department: layout,   vendor: in-house, artists: 9 }
+  anim-pool-1:     { department: anim,     vendor: in-house, artists: 10 }
+  anim-pool-2:     { department: anim,     vendor: vendor-a, artists: 8 }
+  fx-pool-1:       { department: fx,       vendor: in-house, artists: 10 }
+  lighting-pool-1: { department: lighting, vendor: vendor-a, artists: 8 }
+  lighting-pool-2: { department: lighting, vendor: vendor-b, artists: 6 }
+  comp-pool-1:     { department: comp,     vendor: in-house, artists: 6 }
+  comp-pool-2:     { department: comp,     vendor: vendor-b, artists: 5 }
+  di-pool-1:       { department: di,       vendor: in-house, artists: 2 }  # under the floor
+
+# ~200 shots. `complexity` scales effort and rework probability together.
+sequences:
+  - { id: SEQ0010, episode: 1, shots: 16, complexity: 0.8, stages: [layout, anim, lighting, comp, di] }
+  - { id: SEQ0020, episode: 1, shots: 14, complexity: 1.0, stages: [layout, anim, lighting, comp, di] }
+  - { id: SEQ0030, episode: 1, shots: 18, complexity: 1.3, stages: [previz, layout, anim, fx, lighting, comp, di] }
+  - { id: SEQ0110, episode: 2, shots: 15, complexity: 0.9, stages: [layout, anim, lighting, comp, di] }
+  - { id: SEQ0120, episode: 2, shots: 20, complexity: 1.2, stages: [previz, layout, anim, fx, lighting, comp, di] }
+  - { id: SEQ0130, episode: 2, shots: 12, complexity: 0.7, stages: [layout, anim, lighting, comp, di] }
+  - { id: SEQ0210, episode: 2, shots: 17, complexity: 1.1, stages: [layout, anim, fx, lighting, comp, di] }
+  - { id: SEQ0310, episode: 3, shots: 19, complexity: 1.0, stages: [layout, anim, lighting, comp, di] }
+  - { id: SEQ0320, episode: 3, shots: 14, complexity: 1.4, stages: [previz, layout, anim, fx, lighting, comp, di] }
+  - { id: SEQ0410, episode: 3, shots: 16, complexity: 1.1, stages: [layout, anim, fx, lighting, comp, di] }
+  # The act-three climax: the sequence the director keeps revisiting.
+  - { id: SEQ0420, episode: 3, shots: 22, complexity: 1.5, stages: [previz, layout, anim, fx, lighting, comp, di] }
+  - { id: SEQ0430, episode: 3, shots: 17, complexity: 1.2, stages: [layout, anim, fx, lighting, comp, di] }
+
+# The two perturbations the demo is built to catch. Both are ordinary: a
+# creative change, and a quiet technical regression. Neither is visible in the
+# other party's system, which is the whole point.
+story:
+  - id: director-note-act-three
+    kind: creative_note
+    days_before_now: 18
+    sequence: SEQ0420
+    stage: comp
+    # Multiplies the retake rate: the note lands on work already approved.
+    # Comp's base rate at this complexity is already 0.42, so anything above
+    # ~2.2 saturates the 0.93 ceiling in _decide_retake. Raising it further
+    # changes nothing, which is worth knowing before tuning it.
+    retake_multiplier: 3.2
+    annotation: >-
+      Director note, act three: recut the climax. Grade is colder, so every
+      comp in SEQ0420 needs revisiting.
+
+  - id: lighting-cache-regression
+    kind: farm_regression
+    days_before_now: 25
+    sequence: SEQ0420
+    stage: comp
+    # A cache invalidation that nobody connected to the schedule. Each affected
+    # render retries a fraction of its frames, so an iteration costs far more
+    # farm time than the department's baseline -- invisible in Kitsu, and
+    # invisible in OpenCue without the shot id.
+    frame_failure_rate: 0.41
+    render_hours_multiplier: 4.1
+    failing_frame: 118
+    log_signature: "ERROR cache miss: /cache/nightfall/SEQ0420/lighting_v%d.exr (frame 118)"
