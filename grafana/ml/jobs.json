@@ -1,0 +1,57 @@
+[
+  {
+    "_kind": "forecast",
+    "name": "turnaround-delivery-burndown",
+    "metric": "turnaround_forecast_shots_approved",
+    "description": "Projected shots signed off through DI. The gap to the planned slope is the delivery slip.",
+    "grafanaUrl": "https://your-stack.grafana.net",
+    "datasourceType": "prometheus",
+    "datasourceId": 8,
+    "datasourceUid": "grafanacloud-prom",
+    "queryParams": {
+      "expr": "sum(turnaround_shots_approved_total)",
+      "range": true
+    },
+    "interval": 60,
+    "algorithm": "grafana_prophet_1_0_1",
+    "trainingWindow": 10800,
+    "trainingFrequency": 3600
+  },
+  {
+    "_kind": "forecast",
+    "name": "turnaround-comp-pool-2-hours",
+    "metric": "turnaround_forecast_comp_pool_2_hours",
+    "description": "Projected weekly hours per rostered artist in the crunch pool. Crossing 40 in the forecast is the early warning the crew-load alert only gives after the fact.",
+    "grafanaUrl": "https://your-stack.grafana.net",
+    "datasourceType": "prometheus",
+    "datasourceId": 8,
+    "datasourceUid": "grafanacloud-prom",
+    "queryParams": {
+      "expr": "max(turnaround_artist_hours_logged{pool=\"comp-pool-2\"})",
+      "range": true
+    },
+    "interval": 60,
+    "algorithm": "grafana_prophet_1_0_1",
+    "trainingWindow": 10800,
+    "trainingFrequency": 3600
+  },
+  {
+    "_kind": "outlier",
+    "name": "turnaround-vendor-turnaround",
+    "metric": "turnaround_outlier_vendor_turnaround",
+    "description": "Which vendor's turnaround behaves unlike the others, discovered rather than asserted.",
+    "grafanaUrl": "https://your-stack.grafana.net",
+    "datasourceType": "prometheus",
+    "datasourceId": 8,
+    "datasourceUid": "grafanacloud-prom",
+    "queryParams": {
+      "expr": "avg by (vendor) (turnaround_vendor_turnaround_seconds)",
+      "range": true
+    },
+    "interval": 60,
+    "algorithm": {
+      "name": "mad",
+      "sensitivity": 0.5
+    }
+  }
+]

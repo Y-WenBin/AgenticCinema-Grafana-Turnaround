@@ -1,0 +1,141 @@
+[
+  {
+    "title": "turnaround",
+    "folderUid": "turnaround",
+    "interval": 60,
+    "rules": [
+      {
+        "uid": "turnaround-crew-crunch",
+        "title": "Comp pool heading past 60 h/week",
+        "condition": "C",
+        "for": "0s",
+        "folderUID": "turnaround",
+        "ruleGroup": "turnaround",
+        "noDataState": "OK",
+        "execErrState": "Error",
+        "data": [
+          {
+            "refId": "A",
+            "relativeTimeRange": {
+              "from": 10800,
+              "to": 0
+            },
+            "datasourceUid": "grafanacloud-prom",
+            "model": {
+              "refId": "A",
+              "expr": "last_over_time(((max by (pool) (turnaround_artist_hours_logged{department=\"comp\"})) and on(pool) (turnaround_pool_headcount >= 3))[3h:1m])",
+              "instant": true,
+              "range": false,
+              "editorMode": "code",
+              "intervalMs": 1000,
+              "maxDataPoints": 43200,
+              "datasource": {
+                "type": "prometheus",
+                "uid": "grafanacloud-prom"
+              }
+            }
+          },
+          {
+            "refId": "C",
+            "datasourceUid": "__expr__",
+            "model": {
+              "refId": "C",
+              "type": "threshold",
+              "expression": "A",
+              "datasource": {
+                "type": "__expr__",
+                "uid": "__expr__"
+              },
+              "conditions": [
+                {
+                  "type": "query",
+                  "evaluator": {
+                    "type": "gt",
+                    "params": [
+                      60
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "labels": {
+          "severity": "warning",
+          "team": "production",
+          "signal": "crew-load"
+        },
+        "annotations": {
+          "summary": "{{ $labels.pool }} is at {{ printf \"%.0f\" $values.A.Value }} h per rostered artist this week.",
+          "lever": "The cause is upstream: every comp iteration on SEQ0420 is burning ~4x the farm core-hours it should, because frame 118 keeps failing. Fix the lighting cache regression and the rework that is filling this pool's week stops being necessary."
+        }
+      },
+      {
+        "uid": "turnaround-render-waste",
+        "title": "A sequence is concentrating render waste",
+        "condition": "C",
+        "for": "0s",
+        "folderUID": "turnaround",
+        "ruleGroup": "turnaround",
+        "noDataState": "OK",
+        "execErrState": "Error",
+        "data": [
+          {
+            "refId": "A",
+            "relativeTimeRange": {
+              "from": 10800,
+              "to": 0
+            },
+            "datasourceUid": "grafanacloud-prom",
+            "model": {
+              "refId": "A",
+              "expr": "last_over_time((sum by (sequence) (turnaround_render_waste_core_hours_total))[3h:1m])",
+              "instant": true,
+              "range": false,
+              "editorMode": "code",
+              "intervalMs": 1000,
+              "maxDataPoints": 43200,
+              "datasource": {
+                "type": "prometheus",
+                "uid": "grafanacloud-prom"
+              }
+            }
+          },
+          {
+            "refId": "C",
+            "datasourceUid": "__expr__",
+            "model": {
+              "refId": "C",
+              "type": "threshold",
+              "expression": "A",
+              "datasource": {
+                "type": "__expr__",
+                "uid": "__expr__"
+              },
+              "conditions": [
+                {
+                  "type": "query",
+                  "evaluator": {
+                    "type": "gt",
+                    "params": [
+                      20
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "labels": {
+          "severity": "warning",
+          "team": "pipeline",
+          "signal": "render-waste"
+        },
+        "annotations": {
+          "summary": "{{ $labels.sequence }} has wasted {{ printf \"%.0f\" $values.A.Value }} farm core-hours on renders that produced no accepted frame.",
+          "lever": "Pull the failing frames for this sequence from Loki (`{service_name=\"turnaround-bridge\"} |= \"frame 118\"`), identify the cache key, and invalidate it. This waste predates the director note."
+        }
+      }
+    ]
+  }
+]

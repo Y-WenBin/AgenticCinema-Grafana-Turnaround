@@ -389,11 +389,50 @@ problem. The path now keys off a `real_otlp` flag captured before the
 reassignment, with a regression test that asserts a log processor is attached
 when both exporters default (it fails on the old code).
 
+### Phase 3 — dashboards, alerts, ML (2026-09-06)
+
+Everything under `grafana/`, pushed by one idempotent `grafana/provision.py`
+(needs `GRAFANA_URL` + the service-account token). `uv run python -m
+grafana.build` / `grafana.alerts.build` / `grafana.ml.build` regenerate the
+committed JSON.
+
+- **Three dashboards** in a `Turnaround` folder: *Crew Load* (the hero —
+  weekly hours per rostered artist by pool, the floor join made visible),
+  *The Join* (cumulative render core-hours per comp iteration by sequence —
+  SEQ0420 sits clear of the pack — plus render waste and frame-failure rate),
+  *Delivery* (burndown, cumulative iteration load, vendor turnaround). A
+  `director-note` annotation query is wired on all three.
+- **`turnaround_pool_headcount`** added to the seed so the aggregation floor is
+  a transparent PromQL join (`... and on(pool) (turnaround_pool_headcount >=
+  3)`) rather than a hard-coded pool list. `di-pool-1` is 2.
+- **`bridge/annotate.py`** — the director note now lands as a Grafana
+  annotation, timewarped like everything else.
+- **Two alert rules**, provisioned, **firing correctly**: *crew crunch* on
+  comp-pool-1 and comp-pool-2 but **not di-pool-1** (floor join), and *render
+  waste* on **SEQ0420 only**. Each carries a `lever` annotation — a remediation,
+  not just pressure. Queries are wrapped in `last_over_time(...[3h:1m])` so a
+  single seed keeps them evaluable.
+- **Grafana ML** — three jobs provisioned via the ML app API
+  (`grafana-ml-app/resources/manage/api/v1`): two Prophet forecasts
+  (burndown, comp-pool-2 hours) and one MAD outlier detector on vendor
+  turnaround. The forecasts need ~100+ points of continuous history to train;
+  on the compressed time base that only accumulates once `seed/refresh.py` (or
+  the Cloud Run job) has been re-seeding for a couple of hours, so in a
+  single-seed session they sit in `error: "No series to train"`. Documented,
+  not faked — `predict_linear` panels were tried and removed because repeated
+  re-seeds reset the counters and the extrapolation went to nonsense.
+
+**Phase 3 gate.** Crew alert fires on comp-pool-2 ✅. "Forecast differs from
+plan" is carried by the alert itself (a forward-looking *"heading past 60 h"*
+that trips before a burndown would show it) and by The Join showing SEQ0420's
+per-iteration cost elevated since before the note — the story's real argument.
+The Prophet charts are infrastructure-complete but need the deployment's
+continuous history to render.
+
 ### Not started
 
-Dashboards · ML forecasts and alert rules · MCP wiring · the four agents ·
-approval gate · Kitsu write-back · supervisor console · AI Observability
-instrumentation · Cloud Run deploy · demo video.
+MCP wiring · the four agents · approval gate · Kitsu write-back · supervisor
+console · AI Observability instrumentation · Cloud Run deploy · demo video.
 
 ### Deferred by decision
 
