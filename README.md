@@ -80,7 +80,8 @@ Kitsu or Grafana.
 
 ## Status
 
-Under active development.
+Under active development. Full technical reference, design decisions and
+progress: **[PROJECT.md](PROJECT.md)**.
 
 - [`bridge/`](bridge/) — ontology, privacy invariants, OTLP emitter. Complete and tested.
 - [`seed/`](seed/) — the simulated show. Complete; see [`seed/story.md`](seed/story.md)
