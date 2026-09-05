@@ -39,6 +39,7 @@ from opentelemetry.sdk.metrics.export import (
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.util.instrumentation import InstrumentationScope
 
+from bridge import timewarp
 from bridge.ontology import Attr
 from bridge.privacy import PrivacyViolation, assert_no_pii
 
@@ -66,7 +67,7 @@ class Point:
 
 
 def _ns(when: datetime) -> int:
-    return int(when.astimezone(timezone.utc).timestamp() * 1_000_000_000)
+    return int(timewarp.apply(when).astimezone(timezone.utc).timestamp() * 1_000_000_000)
 
 
 def _label_key(labels: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
