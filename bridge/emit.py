@@ -191,8 +191,10 @@ class Emitter:
         log_exporter: LogExporter | None = None,
     ) -> None:
         # An injected exporter means a test or a dry run; only the real OTLP
-        # path needs the environment to be configured.
-        if span_exporter is None:
+        # path needs the environment to be configured. Record the intent now,
+        # before span_exporter is reassigned -- the log side keys off it too.
+        real_otlp = span_exporter is None
+        if real_otlp:
             if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
                 raise RuntimeError(
                     "OTEL_EXPORTER_OTLP_ENDPOINT is unset. Copy .env.example and fill in the "
@@ -200,9 +202,6 @@ class Emitter:
                 )
             span_exporter = OTLPSpanExporter()
             processor = BatchSpanProcessor(span_exporter)
-            from opentelemetry.exporter.otlp.proto.http._log_exporter import (  # noqa: F401
-                OTLPLogExporter,
-            )
         else:
             # Synchronous, so a caller can assert on what was written.
             processor = SimpleSpanProcessor(span_exporter)
@@ -222,13 +221,17 @@ class Emitter:
         # endpoint), whereas Loki's are. Carrying trace and span ids on the log
         # means the agent can reconstruct a shot's history through tools we
         # know exist, and correlate to the trace when it can reach one.
-        if log_exporter is None:
-            log_exporter = OTLPLogExporter() if span_exporter is None else None
+        if log_exporter is None and real_otlp:
+            from opentelemetry.exporter.otlp.proto.http._log_exporter import (
+                OTLPLogExporter,
+            )
+
+            log_exporter = OTLPLogExporter()
         self._logs = LoggerProvider(resource=resource)
         if log_exporter is not None:
             self._logs.add_log_record_processor(
                 BatchLogRecordProcessor(log_exporter)
-                if isinstance(processor, BatchSpanProcessor)
+                if real_otlp
                 else SimpleLogRecordProcessor(log_exporter)
             )
         self._logger = self._logs.get_logger(SERVICE_NAME)

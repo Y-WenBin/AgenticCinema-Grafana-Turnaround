@@ -4,12 +4,11 @@ Master reference for objective, architecture, design decisions and progress.
 Working notes live here; [`README.md`](README.md) is the public front door and
 [`seed/story.md`](seed/story.md) is the measured demo narrative.
 
-**Status:** data plane in a live stack. 97 tests. Grafana Cloud stack
-`niftysamosa2162` (region `prod-ap-southeast-1`) seeded. **Traces and metrics
-verified** — the thesis join resolves, SEQ0420 stands out. **Logs not landing**:
-the OTLP gateway 204s them but nothing is queryable in Loki (see §9). GCP /
-Vertex AI reachable (`gemini-2.5-flash`). Private repo:
-`github.com/WenBin-Y/turnaround`.
+**Status:** Phase 1 gate **passed** in a live stack. 97 tests. Grafana Cloud
+stack `niftysamosa2162` (region `prod-ap-southeast-1`) seeded; one `shot_id`
+resolves across **traces, logs and metrics**, and the thesis join puts SEQ0420
+well above every other sequence. GCP / Vertex AI reachable (`gemini-2.5-flash`).
+Private repo: `github.com/WenBin-Y/turnaround`.
 **Last updated:** 2026-09-06.
 
 ---
@@ -366,6 +365,11 @@ completes in ~4 s.
   department spans, comp spans in error status. Tempo accepts the historical
   span times directly (no compression needed for traces, but the seeder warps
   them anyway so the trace and metric time axes align).
+- **Logs** — `{service_name="turnaround-bridge"}` carries ~1,476 lines. For one
+  shot the status transitions (`comp -> retake (iteration 1)`, `-> wip
+  (iteration 3)`, …) and the `frame 118` cache-miss errors all resolve, each
+  on the derived trace id. This is the fallback path for when the agent cannot
+  reach a trace.
 - **Metrics** — all ten `turnaround_*` series present. The thesis join
   (`increase(render_core_hours[5m]) / increase(task_iterations[5m])`, by
   sequence) puts **SEQ0420 well above every other sequence**; render-waste
@@ -374,20 +378,16 @@ completes in ~4 s.
   comp-pool-1/2 highest. Floor behaviour (`di-pool-1` suppression) is an
   alert-layer concern, still to wire in Phase 3.
 
-### Blocked
-
-**Logs are not reaching Loki.** The OTLP gateway returns **204** for a
-well-formed `/v1/logs` payload (auth and `logs:write` scope are fine — an empty
-POST also 204s), but no `turnaround-bridge` stream — in fact no stream at all —
-is queryable through the `grafanacloud-logs` datasource in any window. Leading
-suspicion: that datasource points at `logs-prod-020.grafana.net` while the rest
-of the stack is `*-prod-ap-southeast-1`, so gateway-ingested logs may land in a
-Loki tenant the datasource does not read; alternatively Loki drops them
-post-gateway on a limit. Traces carry the full stage history as a fallback, so
-this does not block Phase 3, but the "every event exists as a Loki line too"
-redundancy is currently one-legged. **Next:** confirm the stack's real Loki
-push/read endpoints from the Connections page; if it is a routing mismatch,
-repoint the datasource; otherwise open a Grafana Cloud support ticket.
+**Bug found and fixed on the way (`bridge/emit.py`).** The constructor tested
+`span_exporter is None` to decide whether to attach a log processor — but
+`span_exporter` had already been reassigned to a real `OTLPSpanExporter` a few
+lines up, so on the seeder's path the condition was always false and **no log
+processor was ever attached**. Every `emit_log` call was silently discarded;
+`flush()` returned True because there was nothing queued. Two failed seeds
+(pre- and post-compression) landed zero logs for this reason, not a Loki
+problem. The path now keys off a `real_otlp` flag captured before the
+reassignment, with a regression test that asserts a log processor is attached
+when both exporters default (it fails on the old code).
 
 ### Not started
 

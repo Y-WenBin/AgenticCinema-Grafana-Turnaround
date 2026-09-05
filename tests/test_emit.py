@@ -187,3 +187,24 @@ class TestLogsCorrelateToTraces:
                 iteration=1,
                 attributes={"reviewer_email": "jane@studio.com"},
             )
+
+
+class TestRealOtlpPathAttachesALogProcessor:
+    """Regression: the constructor decided whether to wire up log export by
+    testing `span_exporter is None` -- after it had already reassigned
+    span_exporter to a real OTLPSpanExporter. On the seeder's path the test was
+    always false, so no log processor was attached and every emit_log was
+    silently dropped while flush() still reported success."""
+
+    def test_a_log_processor_is_attached_when_both_exporters_default(self, monkeypatch):
+        # The seeder constructs Emitter() with no arguments. The old code only
+        # attached a log processor when `span_exporter is None` was still true
+        # at that line -- which it never was, because span_exporter had been
+        # reassigned to a real OTLPSpanExporter just above.
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+        emitter = Emitter()
+        try:
+            attached = emitter._logs._multi_log_record_processor._log_record_processors
+            assert attached, "no log processor attached on the real OTLP path"
+        finally:
+            emitter.shutdown()
