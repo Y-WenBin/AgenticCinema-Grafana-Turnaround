@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+.pytest_cache/
+.ruff_cache/
+seed/fixtures/*.json
+*.log
+.DS_Store
