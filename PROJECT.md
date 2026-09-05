@@ -14,7 +14,7 @@ verified end to end; the remediation/write-back path is wired and gated but was
 mid-verification when the session paused. Grafana Cloud stack `your-stack`
 (region `prod-ap-southeast-1`). GCP / Vertex AI reachable (`gemini-2.5-flash`;
 `gemini-2.5-pro` is 429 quota-locked on this project, so everything runs flash).
-Private repo: `github.com/WenBin-Y/turnaround`.
+Private repo: `github.com/Y-WenBin/AgenticCinema-Grafana-Turnaround`.
 **Last updated:** 2026-09-06.
 
 ---
