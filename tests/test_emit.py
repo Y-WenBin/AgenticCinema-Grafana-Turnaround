@@ -121,3 +121,69 @@ class TestPrivacyIsEnforcedOnTheExportPath:
     def test_a_raw_kitsu_uuid_cannot_be_emitted(self, emitter):
         with pytest.raises(PrivacyViolation, match="raw source id"):
             emitter.emit_stage(stage(artist="3f2504e0-4f89-11d3-9a0c-0305e82c3301"))
+
+
+class TestLogsCorrelateToTraces:
+    """Deliberate redundancy: TraceQL tools are not in mcp-grafana's default
+    tool set, Loki's are. Carrying trace and span ids on the log line means the
+    agent can reconstruct a shot's history through tools we know exist -- but
+    only if the ids genuinely match, which is what these pin down."""
+
+    @pytest.fixture
+    def wired(self):
+        from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
+
+        spans, logs = InMemorySpanExporter(), InMemoryLogRecordExporter()
+        emitter = Emitter(span_exporter=spans, log_exporter=logs)
+        yield emitter, spans, logs
+        emitter.shutdown()
+
+    def test_log_and_span_share_trace_and_span_id(self, wired):
+        emitter, spans, logs = wired
+        emitter.emit_stage(stage(department=Department.COMP, iteration=3))
+        emitter.emit_log(
+            at=START,
+            message="ERROR cache miss: frame 118",
+            shot_id="SEQ0420_SH0100",
+            department="comp",
+            iteration=3,
+            severity="ERROR",
+        )
+        (span,) = spans.get_finished_spans()
+        record = logs.get_finished_logs()[0].log_record
+        assert record.trace_id == span.context.trace_id
+        assert record.span_id == span.context.span_id
+
+    def test_log_trace_id_is_the_published_one(self, wired):
+        emitter, _, logs = wired
+        emitter.emit_log(
+            at=START, message="m", shot_id="SEQ0420_SH0100", department="comp", iteration=1
+        )
+        record = logs.get_finished_logs()[0].log_record
+        assert format(record.trace_id, "032x") == trace_id_for_shot("SEQ0420_SH0100")
+
+    def test_log_carries_the_historical_timestamp(self, wired):
+        emitter, _, logs = wired
+        emitter.emit_log(
+            at=START, message="m", shot_id="SEQ0420_SH0100", department="comp", iteration=1
+        )
+        assert logs.get_finished_logs()[0].log_record.timestamp == int(START.timestamp() * 1e9)
+
+    def test_sequence_is_labelled_for_loki(self, wired):
+        emitter, _, logs = wired
+        emitter.emit_log(
+            at=START, message="m", shot_id="SEQ0420_SH0100", department="comp", iteration=1
+        )
+        assert logs.get_finished_logs()[0].log_record.attributes[Attr.SEQUENCE] == "SEQ0420"
+
+    def test_pii_is_refused_on_the_log_path_too(self, wired):
+        emitter, _, _ = wired
+        with pytest.raises(PrivacyViolation):
+            emitter.emit_log(
+                at=START,
+                message="m",
+                shot_id="SEQ0420_SH0100",
+                department="comp",
+                iteration=1,
+                attributes={"reviewer_email": "jane@studio.com"},
+            )
