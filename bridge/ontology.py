@@ -279,6 +279,13 @@ class Metric:
     ARTIST_HOURS = "turnaround_artist_hours_logged"
     VENDOR_TURNAROUND = "turnaround_vendor_turnaround_seconds"
 
+    #: Rostered headcount per pool. Not a load signal -- it exists so the
+    #: aggregation floor is a transparent join in a query or alert
+    #: (`... and on(pool) turnaround_pool_headcount >= 3`) rather than a magic
+    #: list of pool names. di-pool-1 is deliberately 2, so the demo can show a
+    #: crunch alert being suppressed rather than assert that it would be.
+    POOL_HEADCOUNT = "turnaround_pool_headcount"
+
     # Compute plane, from OpenCue, relabelled onto shots
     RENDER_CORE_HOURS = "turnaround_render_core_hours_total"
     RENDER_FRAMES_FAILED = "turnaround_render_frames_failed_total"

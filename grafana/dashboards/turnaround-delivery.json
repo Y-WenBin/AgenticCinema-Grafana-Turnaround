@@ -1,0 +1,270 @@
+{
+  "uid": "turnaround-delivery",
+  "title": "Turnaround \u00b7 Delivery",
+  "description": "Burndown, iteration load and vendor turnaround.",
+  "tags": [
+    "turnaround",
+    "delivery"
+  ],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "",
+  "annotations": {
+    "list": [
+      {
+        "name": "Director notes",
+        "enable": true,
+        "iconColor": "yellow",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "-- Grafana --"
+        },
+        "target": {
+          "type": "tags",
+          "tags": [
+            "director-note"
+          ],
+          "limit": 100,
+          "matchAny": true
+        }
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "sequence",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "grafanacloud-prom"
+        },
+        "query": {
+          "query": "label_values(turnaround_task_iterations_total, sequence)",
+          "refId": "A"
+        },
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Where the schedule is, and how hard it is working to get there.** Burndown alone never predicts crunch \u2014 that is what the iteration and hours views are for \u2014 but it frames everything else."
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Shots signed off through DI",
+      "description": "Cumulative deliveries against the 200-shot line. Grafana ML job turnaround-delivery-burndown forecasts this series with Prophet; the gap to the line at the planned date is the slip.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 3
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "editorMode": "code",
+          "expr": "sum(turnaround_shots_approved_total)",
+          "legendFormat": "delivered",
+          "range": true,
+          "instant": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "editorMode": "code",
+          "expr": "vector(200)",
+          "legendFormat": "all 200 shots",
+          "range": true,
+          "instant": false,
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Department passes per sequence (cumulative, incl. rework)",
+      "description": "The leading indicator of a slip \u2014 still barely moving on SEQ0420 this soon after a note, which is the point.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 3
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "editorMode": "code",
+          "expr": "sum by (sequence) (turnaround_task_iterations_total{sequence=~\"$sequence\"})",
+          "legendFormat": "{{sequence}}",
+          "range": true,
+          "instant": false,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Vendor turnaround \u2014 seconds per department pass",
+      "description": "Wall-clock per pass by vendor. vendor-b is the outlier the ML detector flags.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 11
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "editorMode": "code",
+          "expr": "avg by (vendor, department) (turnaround_vendor_turnaround_seconds)",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true,
+          "refId": "A",
+          "format": "table"
+        }
+      ]
+    }
+  ]
+}

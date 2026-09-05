@@ -113,6 +113,21 @@ def build_metrics(history: ProductionHistory, backfill: MetricBackfill) -> None:
         ),
     )
 
+    # Rostered headcount, sampled at both ends of the window so the series is
+    # a flat line a floor join can reference at any time in range.
+    span_ends = [min(s.started_at for s in history.stages), max(s.ended_at for s in history.stages)]
+    pool_department = {log.pool: log.department.value for log in history.time_logs}
+    backfill.gauge(
+        Metric.POOL_HEADCOUNT,
+        [
+            Point(at, float(count), {"pool": pool, "department": pool_department.get(pool, "")})
+            for pool, count in history.pool_headcount.items()
+            for at in span_ends
+        ],
+        unit="{artist}",
+        description="Rostered artists per pool. Join key for the aggregation floor.",
+    )
+
     # -- compute plane, keyed onto the creative plane ---------------------
     core_hours: list[Point] = []
     frames_total: list[Point] = []
@@ -273,9 +288,17 @@ def main() -> None:
     points = backfill.point_count
     written = backfill.flush()
 
+    marks = 0
+    if not args.dry_run and history.annotations:
+        from bridge.annotate import Annotator
+
+        annotator = Annotator()
+        if annotator.enabled:
+            marks = annotator.write(history.annotations)
+
     print(
         f"\n  spans  {spans}\n  logs   {logs}\n  metric points {written} "
-        f"(buffered {points})"
+        f"(buffered {points})\n  annotations {marks}"
     )
     print("\ndry run: nothing left this machine." if args.dry_run else "\nwritten to Grafana Cloud.")
 
