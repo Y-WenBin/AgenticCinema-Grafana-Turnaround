@@ -9,3 +9,7 @@ __pycache__/
 seed/fixtures/*.json
 *.log
 .DS_Store
+
+# secrets
+.secrets/
+gcp-sa*.json
