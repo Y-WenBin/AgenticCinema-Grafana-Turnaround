@@ -4,51 +4,19 @@ accumulation and the label rules are tested directly."""
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from opentelemetry.sdk.metrics.export import (
-    AggregationTemporality,
-    Gauge,
-    MetricExporter,
-    MetricExportResult,
-    Sum,
-)
+from opentelemetry.sdk.metrics.export import AggregationTemporality, Gauge, Sum
 
 from bridge.metrics import MAX_POINTS_PER_EXPORT, MetricBackfill, Point
 from bridge.ontology import Attr
 from bridge.privacy import PrivacyViolation
+from bridge.testing import CollectingMetricExporter
 
 T0 = datetime(2026, 8, 1, tzinfo=timezone.utc)
 
 
-class Capture(MetricExporter):
-    """Collects what would have gone to Grafana Cloud."""
-
-    def __init__(self):
-        super().__init__()
-        self.batches = []
-
-    def export(self, metrics_data, timeout_millis=10_000, **kwargs):
-        for rm in metrics_data.resource_metrics:
-            for sm in rm.scope_metrics:
-                self.batches.append(list(sm.metrics))
-        return MetricExportResult.SUCCESS
-
-    def force_flush(self, timeout_millis=10_000):
-        return True
-
-    def shutdown(self, timeout_millis=30_000, **kwargs):
-        return None
-
-    @property
-    def metrics(self):
-        return [m for batch in self.batches for m in batch]
-
-    def points(self, name):
-        return [p for m in self.metrics if m.name == name for p in m.data.data_points]
-
-
 @pytest.fixture
 def capture():
-    return Capture()
+    return CollectingMetricExporter()
 
 
 @pytest.fixture

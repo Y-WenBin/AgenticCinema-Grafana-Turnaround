@@ -31,6 +31,14 @@ from datetime import datetime, timezone
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs._internal import LogRecord
+from opentelemetry.sdk._logs.export import (
+    BatchLogRecordProcessor,
+    LogExporter,
+    SimpleLogRecordProcessor,
+)
+from opentelemetry._logs import SeverityNumber
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
@@ -89,6 +97,11 @@ class DeterministicIdGenerator(IdGenerator):
             return self._random.generate_span_id()
         shot_id, department, iteration = seed
         return _derive(f"span:{shot_id}:{department}:{iteration}", nbytes=8)
+
+
+def span_id_for(shot_id: str, department: str, iteration: int) -> int:
+    """The span id for one department pass, computed rather than looked up."""
+    return _derive(f"span:{shot_id}:{department}:{iteration}", nbytes=8)
 
 
 def trace_id_for_shot(shot_id: str) -> str:
@@ -173,6 +186,7 @@ class Emitter:
         *,
         resource_attributes: dict[str, str] | None = None,
         span_exporter: SpanExporter | None = None,
+        log_exporter: LogExporter | None = None,
     ) -> None:
         # An injected exporter means a test or a dry run; only the real OTLP
         # path needs the environment to be configured.
@@ -184,6 +198,9 @@ class Emitter:
                 )
             span_exporter = OTLPSpanExporter()
             processor = BatchSpanProcessor(span_exporter)
+            from opentelemetry.exporter.otlp.proto.http._log_exporter import (  # noqa: F401
+                OTLPLogExporter,
+            )
         else:
             # Synchronous, so a caller can assert on what was written.
             processor = SimpleSpanProcessor(span_exporter)
@@ -196,6 +213,23 @@ class Emitter:
         )
         self._provider.add_span_processor(processor)
         self._tracer = trace.get_tracer(SERVICE_NAME, tracer_provider=self._provider)
+
+        # Every stage event is written as a span *and* a trace-shaped log line.
+        # That is deliberate redundancy: TraceQL tools are not in mcp-grafana's
+        # default tool set (they live on the separate Cloud Traces MCP
+        # endpoint), whereas Loki's are. Carrying trace and span ids on the log
+        # means the agent can reconstruct a shot's history through tools we
+        # know exist, and correlate to the trace when it can reach one.
+        if log_exporter is None:
+            log_exporter = OTLPLogExporter() if span_exporter is None else None
+        self._logs = LoggerProvider(resource=resource)
+        if log_exporter is not None:
+            self._logs.add_log_record_processor(
+                BatchLogRecordProcessor(log_exporter)
+                if isinstance(processor, BatchSpanProcessor)
+                else SimpleLogRecordProcessor(log_exporter)
+            )
+        self._logger = self._logs.get_logger(SERVICE_NAME)
 
     def emit_stage(self, event: StageEvent) -> str:
         """Write one department pass as a span. Returns its trace id."""
@@ -232,9 +266,48 @@ class Emitter:
 
         return trace_id_for_shot(event.shot_id)
 
+    def emit_log(
+        self,
+        *,
+        at: datetime,
+        message: str,
+        shot_id: str,
+        department: str,
+        iteration: int,
+        attributes: dict[str, str] | None = None,
+        severity: str = "INFO",
+    ) -> None:
+        """Write one trace-shaped log line, correlated to its span."""
+        labels = {
+            Attr.SHOT_ID: shot_id,
+            Attr.SEQUENCE: sequence_of(shot_id),
+            Attr.DEPARTMENT: department,
+            Attr.ITERATION: iteration,
+            **(attributes or {}),
+        }
+        assert_no_pii(labels, where=f"log {shot_id}/{department}")
+
+        self._logger.emit(
+            LogRecord(
+                timestamp=_ns(at),
+                observed_timestamp=_ns(at),
+                trace_id=_derive(f"shot:{shot_id}", nbytes=16),
+                span_id=span_id_for(shot_id, department, iteration),
+                severity_text=severity,
+                severity_number=(
+                    SeverityNumber.ERROR if severity == "ERROR" else SeverityNumber.INFO
+                ),
+                body=message,
+                attributes=labels,
+            )
+        )
+
     def flush(self, timeout_millis: int = 30_000) -> bool:
         """Block until everything is delivered. The seeder depends on this."""
-        return self._provider.force_flush(timeout_millis)
+        spans_ok = self._provider.force_flush(timeout_millis)
+        logs_ok = self._logs.force_flush(timeout_millis)
+        return bool(spans_ok and logs_ok)
 
     def shutdown(self) -> None:
         self._provider.shutdown()
+        self._logs.shutdown()
