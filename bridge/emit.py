@@ -49,6 +49,7 @@ from opentelemetry.sdk.trace.export import (
 from opentelemetry.sdk.trace.id_generator import IdGenerator
 from opentelemetry.trace import Status, StatusCode
 
+from bridge import timewarp
 from bridge.ontology import Attr, Department, TaskStatus, sequence_of
 from bridge.privacy import assert_no_pii
 
@@ -125,6 +126,7 @@ def _seeded(shot_id: str, department: str, iteration: int):
 def _ns(when: datetime) -> int:
     if when.tzinfo is None:
         raise ValueError("timestamps must be timezone-aware; production data crosses facilities")
+    when = timewarp.apply(when)
     return int(when.astimezone(timezone.utc).timestamp() * 1_000_000_000)
 
 

@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
+from bridge import timewarp
 from bridge.emit import Emitter
 from bridge.metrics import MetricBackfill, Point
 from bridge.ontology import Attr, Department, Metric, TaskStatus
@@ -23,13 +24,20 @@ from seed.model import ProductionHistory, ShowSimulation
 
 WORKWEEK_HOURS = 40.0
 
+#: Hosted Mimir/Loki refuse samples older than a ~1h out-of-order window, so the
+#: whole five-month history is compressed into this many minutes of wall-clock
+#: time ending at "now". Left of an hour with margin for the seeder's own
+#: runtime and clock skew. Override with --compress; --compress 0 disables it
+#: (real timestamps, for a self-hosted stack with the window widened).
+DEFAULT_COMPRESS_MINUTES = 45
+
 
 def _week_start(day: date) -> date:
     return day - timedelta(days=day.weekday())
 
 
 def _midnight(day: date) -> datetime:
-    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+    return datetime(day.year, day.month, day.day, tzinfo=UTC)
 
 
 def build_metrics(history: ProductionHistory, backfill: MetricBackfill) -> None:
@@ -211,11 +219,33 @@ def main() -> None:
         action="store_true",
         help="exercise the full path against in-memory exporters and report",
     )
+    parser.add_argument(
+        "--compress",
+        type=float,
+        default=DEFAULT_COMPRESS_MINUTES,
+        metavar="MINUTES",
+        help=(
+            "compress the whole history into this many minutes of wall-clock "
+            f"time so hosted Mimir/Loki accept it (default {DEFAULT_COMPRESS_MINUTES}; "
+            "0 keeps real timestamps)"
+        ),
+    )
     args = parser.parse_args()
 
     print("simulating the show...")
-    history = ShowSimulation.load().run()
+    sim = ShowSimulation.load()
+    history = sim.run()
     print(summarise(history))
+
+    if args.compress > 0:
+        # Pad the low end: weekly buckets round back to Monday, up to 6 days
+        # before the earliest logged day.
+        timewarp.configure(
+            anchor=sim.now,
+            earliest=sim.start - timedelta(days=7),
+            window=timedelta(minutes=args.compress),
+        )
+    print(timewarp.describe())
 
     if args.dry_run:
         from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
