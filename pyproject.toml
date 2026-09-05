@@ -1,0 +1,41 @@
+[project]
+name = "turnaround"
+version = "0.1.0"
+description = "Joins the creative schedule to the render farm inside Grafana, and forecasts crunch before it happens."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+
+dependencies = [
+  # Google Cloud AI — the only permitted AI runtime for this hackathon track
+  "google-adk>=1.0.0",
+  "google-genai>=1.0.0",
+  # OpenTelemetry: one OTLP gateway carries traces, logs and metrics
+  "opentelemetry-sdk>=1.29.0",
+  "opentelemetry-exporter-otlp-proto-http>=1.29.0",
+  # Sources
+  "gazu>=0.10.0",          # Kitsu client: task events + time-spents
+  "prometheus-client>=0.21.0",
+  "requests>=2.32.0",
+  # Console
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+
+[tool.hatch.build.targets.wheel]
+packages = ["bridge", "agent", "seed"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
