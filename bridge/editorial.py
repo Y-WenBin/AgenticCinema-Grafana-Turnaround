@@ -1,15 +1,22 @@
 """Editorial ingest: pull the shot list out of a cut.
 
 The creative-schedule side of the join is usually a tracker (``bridge.sources``),
-but the *authoritative* statement of what is in the show right now is the editor's
-cut. Every NLE -- Avid Media Composer, Premiere, DaVinci Resolve, Final Cut --
-exports a CMX3600 EDL, and most also export OpenTimelineIO. This module reads
-either and maps each clip to a shot id via the active ``ShotIdScheme``, so a
-recut (the exact perturbation the seed models as a director note) is visible as a
-change in the cut, not just as a tracker status.
+but the *authoritative* statement of what is in the show right now is the
+editor's cut. Turnaround reads a cut through one of two interchange formats, so
+it does not care which NLE produced it:
 
-``parse_edl`` is pure stdlib. ``iter_otio_cut`` needs ``opentimelineio`` and is
-guarded -- install it with ``pip install turnaround[editorial]``.
+* **CMX3600 EDL** -- ``parse_edl`` / ``shot_ids_from_edl``, pure stdlib. DaVinci
+  Resolve, Premiere Pro, Avid Media Composer, Shotcut and Flame all export one;
+  an online/conform EDL that carries the shot only in the reel column works too.
+* **OpenTimelineIO** -- ``iter_otio_cut``, needs ``opentimelineio`` (``pip
+  install 'turnaround[editorial]'``). DaVinci Resolve 18+, Blender's VSE and
+  Kdenlive export ``.otio`` directly; Final Cut Pro (FCPXML), Premiere (FCP7
+  XML) and Avid (AAF) reach it by also installing the matching
+  ``otio-*-adapter`` package.
+
+Every clip name (or reel) is mapped to a shot id with the active
+``ShotIdScheme``, so a recut -- the perturbation the seed models as a director
+note -- shows up as a change in the cut, not only as a tracker status.
 """
 
 from __future__ import annotations
@@ -20,18 +27,23 @@ from collections.abc import Iterator
 from bridge.ontology import DEFAULT_SHOT_ID_SCHEME, ShotIdScheme
 from bridge.sources import CutItem
 
-# CMX3600 event lines start with an event number, a reel, a track and an edit
-# code, then four timecodes (src in/out, rec in/out). A dissolve/wipe adds a
-# transition-duration column before the timecodes, so rather than pin the column
-# count, take the last four timecode-shaped tokens on the line.
-#   001  R075_SH0100 V     C        01:00:00:00 01:00:04:12 00:59:58:00 01:00:02:12
-#   003  R075_SH0100 V     D    012 01:00:04:12 01:00:07:00 01:00:06:12 01:00:09:00
-# The useful comment line that follows is
-#   * FROM CLIP NAME: R075_SH0100_comp_v006
-_EVENT_HEAD_RE = re.compile(r"^(?P<num>\d+)\s+(?P<reel>\S+)\s+(?P<track>\S+)\s+(?P<edit>\S+)\s")
+# A CMX3600 event line: event number, reel/tape, track, edit code, then four
+# timecodes (src in/out, rec in/out). A dissolve/wipe inserts a
+# transition-duration column before the timecodes, so instead of pinning the
+# column count we read the reel from the head and take the last four
+# timecode-shaped tokens on the line.
+#   001  SEQ0420_SH0100 V     C        01:00:00:00 01:00:04:12 00:59:58:00 01:00:02:12
+#   003  AX             V     D    012 01:00:04:12 01:00:07:00 01:00:06:12 01:00:09:00
+_EVENT_HEAD_RE = re.compile(r"^\s*(?P<num>\d+)\s+(?P<reel>\S+)\s+(?P<track>\S+)\s+(?P<edit>\S+)\s")
 _TC_RE = re.compile(r"\b\d{1,2}[:;]\d{2}[:;]\d{2}[:;]\d{2,3}\b")
-_CLIP_NAME_RE = re.compile(r"^\*\s*FROM CLIP NAME:\s*(?P<name>.+?)\s*$", re.IGNORECASE)
+# The comment that names the source. Different tools use different keys; any of
+# these carries the clip name or file path we can pull a shot id from.
+_CLIP_NAME_RE = re.compile(
+    r"^\*\s*(?:FROM\s+CLIP\s+NAME|SOURCE\s+FILE|FROM\s+FILE|CLIP\s+NAME)\s*:\s*(?P<name>.+?)\s*$",
+    re.IGNORECASE,
+)
 _VERSION_RE = re.compile(r"[_.\-]v(?P<version>\d{1,4})\b", re.IGNORECASE)
+_NON_SHOT_REELS = {"AX", "BL", "BLACK", "NONE", "TAPE", "TBD"}
 _FPS_DEFAULT = 24.0
 
 
@@ -44,10 +56,22 @@ def _tc_to_seconds(tc: str, fps: float = _FPS_DEFAULT) -> float:
     return h * 3600 + m * 60 + s + f / fps
 
 
+def _unanchored(pattern: re.Pattern[str]) -> re.Pattern[str]:
+    """The scheme's regex with its ^ / $ anchors removed, for substring search."""
+    body = pattern.pattern.removeprefix("^").removesuffix("$")
+    return re.compile(body, pattern.flags & ~re.DOTALL)
+
+
 def _shot_id_from_clip(name: str, scheme: ShotIdScheme) -> str | None:
-    """A clip name is '<shot>[_<dept>][_v###][.ext]'. Peel the extension and any
-    trailing '_dept'/'_v###' tokens until what remains is a valid shot id."""
-    stem = re.sub(r"\.[A-Za-z0-9]{2,4}$", "", name.strip())
+    """Resolve a shot id from a clip name, file name or full path.
+
+    Handles '<shot>[_<dept>][_v###][.ext]' and both '/' and '\\' path
+    separators: peel the directory, the extension and any trailing
+    '_dept' / '_v###' tokens until what remains is a valid shot id; failing
+    that, search for a scheme-shaped id anywhere in the string.
+    """
+    base = re.split(r"[\\/]", name.strip())[-1]
+    stem = re.sub(r"\.[A-Za-z0-9]{2,4}$", "", base)
     if scheme.sequence(stem) is not None:
         return stem
     tokens = re.split(r"[_\s]+", stem)
@@ -55,46 +79,62 @@ def _shot_id_from_clip(name: str, scheme: ShotIdScheme) -> str | None:
         candidate = "_".join(tokens[:cut])
         if scheme.sequence(candidate) is not None:
             return candidate
-    # last resort: a scheme-shaped substring anywhere in the name
-    m = scheme.pattern.search(name) if scheme.pattern.groups else None
+    m = _unanchored(scheme.pattern).search(name)
     return m.group(0) if m else None
+
+
+def _reel_shot_id(reel: str, scheme: ShotIdScheme) -> str | None:
+    """A conform/online EDL often carries the shot only in the reel column."""
+    if not reel or reel.upper() in _NON_SHOT_REELS:
+        return None
+    return _shot_id_from_clip(reel, scheme)
 
 
 def parse_edl(text: str, *, fps: float = _FPS_DEFAULT,
               scheme: ShotIdScheme | None = None) -> list[CutItem]:
     """Parse a CMX3600 EDL into the cut's shots, in record order.
 
-    Events whose clip name does not resolve to a shot id (slugs, colour bars,
-    tone) are skipped -- they are real but not shots.
+    The shot id comes from a ``FROM CLIP NAME`` / ``SOURCE FILE`` comment when
+    there is one, otherwise from the reel column. Events that resolve to no shot
+    id (bars, tone, slugs, black) are skipped.
     """
     scheme = scheme or DEFAULT_SHOT_ID_SCHEME
     items: list[CutItem] = []
-    pending: tuple[float, float] | None = None  # (rec_in, rec_out) seconds
+    reel: str | None = None
+    rec: tuple[float, float] | None = None
+    clip_name: str | None = None
+
+    def flush() -> None:
+        nonlocal reel, rec, clip_name
+        if rec is not None:
+            shot_id = (_shot_id_from_clip(clip_name, scheme) if clip_name
+                       else None) or _reel_shot_id(reel or "", scheme)
+            if shot_id is not None:
+                src = clip_name or reel or shot_id
+                ver = _VERSION_RE.search(src)
+                items.append(CutItem(
+                    shot_id=shot_id,
+                    source_name=src,
+                    record_in_seconds=rec[0],
+                    duration_seconds=max(0.0, rec[1] - rec[0]),
+                    revision=int(ver["version"]) if ver else None,
+                ))
+        reel = rec = clip_name = None
 
     for raw in text.splitlines():
         line = raw.rstrip()
-        if _EVENT_HEAD_RE.match(line):
+        head = _EVENT_HEAD_RE.match(line)
+        if head:
+            flush()
+            reel = head["reel"]
             tcs = _TC_RE.findall(line)
-            if len(tcs) >= 4:
-                pending = (_tc_to_seconds(tcs[-2], fps), _tc_to_seconds(tcs[-1], fps))
-            else:
-                pending = None
+            rec = ((_tc_to_seconds(tcs[-2], fps), _tc_to_seconds(tcs[-1], fps))
+                   if len(tcs) >= 4 else None)
             continue
-        clip = _CLIP_NAME_RE.match(line)
-        if clip and pending is not None:
-            name = clip["name"]
-            shot_id = _shot_id_from_clip(name, scheme)
-            if shot_id is not None:
-                ver = _VERSION_RE.search(name)
-                rec_in, rec_out = pending
-                items.append(CutItem(
-                    shot_id=shot_id,
-                    source_name=name,
-                    record_in_seconds=rec_in,
-                    duration_seconds=max(0.0, rec_out - rec_in),
-                    revision=int(ver["version"]) if ver else None,
-                ))
-            pending = None
+        comment = _CLIP_NAME_RE.match(line)
+        if comment and clip_name is None:
+            clip_name = comment["name"]
+    flush()
     return items
 
 
@@ -106,9 +146,32 @@ def shot_ids_from_edl(text: str, *, scheme: ShotIdScheme | None = None) -> list[
     return list(seen)
 
 
+def _otio_clips(timeline: object) -> Iterator[object]:
+    """``find_clips`` on OTIO >= 0.15, ``each_clip`` on older releases."""
+    for attr in ("find_clips", "each_clip"):
+        fn = getattr(timeline, attr, None)
+        if callable(fn):
+            yield from fn()
+            return
+
+
+def _otio_name(clip: object) -> str:
+    name = getattr(clip, "name", "") or ""
+    if name:
+        return name
+    ref = getattr(clip, "media_reference", None)
+    return getattr(ref, "target_url", "") or ""
+
+
 def iter_otio_cut(path: str, *, scheme: ShotIdScheme | None = None) -> Iterator[CutItem]:
-    """Yield CutItems from any OpenTimelineIO-readable file (.otio, .edl, .aaf
-    with the AAF adapter, .fcpxml, ...). Requires ``opentimelineio``."""
+    """Yield CutItems from an OpenTimelineIO-readable file.
+
+    ``.otio`` / ``.otiod`` / ``.otioz`` (DaVinci Resolve 18+, Blender VSE and
+    Kdenlive all export ``.otio``) need only ``opentimelineio``. ``.fcpxml``
+    (Final Cut), FCP7 ``.xml`` (Premiere) and ``.aaf`` (Avid) additionally need
+    the matching ``otio-*-adapter`` package. For a plain EDL from any tool, use
+    ``parse_edl`` -- it needs nothing extra.
+    """
     try:
         import opentimelineio as otio
     except ImportError as exc:  # pragma: no cover - optional dependency
@@ -118,9 +181,9 @@ def iter_otio_cut(path: str, *, scheme: ShotIdScheme | None = None) -> Iterator[
 
     scheme = scheme or DEFAULT_SHOT_ID_SCHEME
     timeline = otio.adapters.read_from_file(path)
-    for clip in timeline.each_clip():
-        name = getattr(clip, "name", "") or ""
-        shot_id = _shot_id_from_clip(name, scheme)
+    for clip in _otio_clips(timeline):
+        name = _otio_name(clip)
+        shot_id = _shot_id_from_clip(name, scheme) if name else None
         if shot_id is None:
             continue
         try:

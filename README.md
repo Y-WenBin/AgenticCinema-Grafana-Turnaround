@@ -4,20 +4,20 @@
 
 In production, *turnaround* is the mandated rest period between wrap and the next call. In VFX it is also how long a shot takes to come back from a vendor. This project is about both, because they are the same number.
 
-Turnaround is a Gemini/ADK multi-agent system that joins a studio's **creative schedule** to its **render farm** inside Grafana, forecasts delivery slip *and* crew overload together, and proposes evidence-backed corrections that a supervisor approves — while the schedule can still be renegotiated.
+Turnaround is a Gemini/ADK multi-agent system that joins a studio's **creative schedule** to its **render farm** inside Grafana, forecasts delivery slip *and* crew overload together, and proposes evidence-backed corrections a supervisor approves — while the schedule can still be renegotiated.
 
 ---
 
 ## The problem
 
-The VFX labour crisis is documented and specific: roughly **70% of VFX workers report unpaid overtime**, about **two-thirds say conditions are unsustainable**, 80-hour weeks are routine, and ~**75% report working through legally mandated breaks**. The cause people name is exactly what telemetry can measure: unrealistic deadlines, plus shots corrected or remade entirely until the schedule collapses into day-and-night work.
+The VFX labour crisis is documented and specific: roughly **70% of VFX workers report unpaid overtime**, about **two-thirds** say conditions are unsustainable, 80-hour weeks are routine, and ~**75% report working through legally mandated breaks**. The cause people name is exactly what telemetry can measure: unrealistic deadlines, plus shots corrected or remade until the schedule collapses into day-and-night work.
 
 Nobody sees it coming, because the evidence lives in two systems that never meet:
 
 | Who | What they see | What they miss |
 |---|---|---|
-| Producers | Kitsu / ShotGrid — shots, statuses, assignments, hours | why a stage keeps repeating |
-| Systems/IT | OpenCue — job failures, frame retries, queue depth | which shot, which deadline, which crew |
+| Producers | the tracker — shots, statuses, assignments, hours | why a stage keeps repeating |
+| Systems / IT | the render farm — job failures, frame retries, queue depth | which shot, which deadline, which crew |
 
 Join them and a whole class of invisible waste becomes obvious:
 
@@ -27,32 +27,21 @@ That join does not exist in any product on the market.
 
 ## The join
 
-Every render manager puts the shot id somewhere in the job name — OpenCue's
-PyOutline uses `<show>-<shot>-<user>_<name>`. **The shot id is already in the
-farm's telemetry.** Turnaround parses it and relabels farm metrics onto
-`shot_id` / `sequence` / `department`, so a single PromQL query spans the
-creative schedule and the compute that serves it.
+Every render manager puts the shot id somewhere in the job name — OpenCue's PyOutline uses `<show>-<shot>-<user>_<name>`. **The shot id is already in the farm's telemetry.** Turnaround parses it out and relabels farm metrics onto `shot_id` / `sequence` / `department`, so one PromQL query spans the creative schedule and the compute that serves it.
 
-Everything else in the product follows from that one relabel. See
-[`bridge/ontology.py`](bridge/ontology.py) — the parser ships conventions for
-OpenCue, Deadline, Tractor, Qube! and Royal Render, plus a `template` mode for a
-studio regex, and the shot-id spelling itself is a configurable `ShotIdScheme`.
+Everything else in the product follows from that single relabel. See [`bridge/ontology.py`](bridge/ontology.py).
 
-## Supported tools
+## Technology-agnostic by design
 
-The join needs a shot id and a task status; those are the only things Turnaround
-asks of a studio's stack. Adapters are three narrow Protocols in
-[`bridge/sources.py`](bridge/sources.py) (`SUPPORTED_TOOLS` is the full list);
-Kitsu and OpenCue are the in-tree reference implementations.
+The join needs two things from a studio's stack: a **shot id** and, on the schedule side, a **task status**. Nothing else. That constraint is deliberate — a studio should not have to change tools to see its own waste. Ingest is three narrow Protocols in [`bridge/sources.py`](bridge/sources.py); `SUPPORTED_TOOLS` is the current list.
 
-| Layer | Native | Works via a ready parser / mapping |
+| Layer | Reference implementation | Also works, out of the box |
 |---|---|---|
-| **Schedule / tracker** | Kitsu (`gazu`) | ShotGrid / Flow Production Tracking, ftrack (status codes normalised by `TaskStatus.from_tracker`); any tracker via CSV export (`CsvScheduleSource`) |
-| **Render farm** | OpenCue | Deadline, Tractor, Qube!, Royal Render (`parse_job_name`); Slurm / bespoke via `TURNAROUND_FARM_JOB_PATTERN` |
-| **Editorial / NLE** | EDL (CMX3600) — [`bridge/editorial.py`](bridge/editorial.py) | Avid, Premiere, DaVinci Resolve, Final Cut via OpenTimelineIO (`pip install 'turnaround[editorial]'`) |
+| **Schedule / tracker** | Kitsu (`gazu`) | ShotGrid / Flow Production Tracking, ftrack — status vocabularies normalised by `TaskStatus.from_tracker`; **any** tracker via a CSV export (`CsvScheduleSource`) |
+| **Render farm** | OpenCue | Deadline, Tractor, Qube!, Royal Render — `parse_job_name(convention=…)`; Slurm or a house scheme via `TURNAROUND_FARM_JOB_PATTERN` |
+| **Editorial / NLE** | CMX3600 EDL — [`bridge/editorial.py`](bridge/editorial.py) | DaVinci Resolve, Premiere Pro, Avid, Shotcut, Flame (EDL); Resolve 18+, Blender VSE, Kdenlive (`.otio`, `pip install 'turnaround[editorial]'`); an online/conform EDL that carries the shot only in the reel column |
 
-Configure with `TURNAROUND_SHOT_ID_SCHEME`, `TURNAROUND_FARM_CONVENTION`,
-`TURNAROUND_FARM_JOB_PATTERN`. Tests: [`tests/test_conventions.py`](tests/test_conventions.py).
+The shot-id spelling itself is a configurable `ShotIdScheme` (`seq_sh` default, plus `numeric` / `dash` / `loose`). Everything above is exercised in [`tests/test_conventions.py`](tests/test_conventions.py) and [`tests/test_editorial.py`](tests/test_editorial.py) against the dialects each tool really emits. Connecting a *live* tracker or farm is a small adapter against the Protocol — see [`docs/SETUP.md`](docs/SETUP.md).
 
 ## The ontology
 
@@ -64,100 +53,89 @@ Configure with `TURNAROUND_SHOT_ID_SCHEME`, `TURNAROUND_FARM_CONVENTION`,
 | Status transitions, notes, render + QC logs | **Loki** streams |
 | Burndown, iterations, artist hours, farm counters | **Mimir** metrics |
 | Director note, cut change, date change | **annotation** |
-| "Seq 42 will miss its date" · "comp pool trending to 68h" | **Grafana ML forecast + alert** |
+| "SEQ0420 will miss its date" · "comp pool trending to 68h" | **Grafana ML forecast + alert** |
 | "Vendor B behaves unlike every other vendor" | **outlier detector** |
 
 Modelling a retake as a span error is not a cute analogy: it means Tempo's own error-rate tooling counts rework for free.
 
 ## This is not a surveillance tool
 
-Measuring artist hours can very easily become a way to punish artists. The premise here is that crunch is a **scheduling** failure, not a personal one, so the telemetry is built so it cannot comfortably be used the other way. Enforced in code, in [`bridge/privacy.py`](bridge/privacy.py) and tested in [`tests/test_privacy.py`](tests/test_privacy.py):
+Measuring artist hours can very easily become a way to punish artists. The premise here is that crunch is a **scheduling** failure, not a personal one, and the telemetry is built so it cannot comfortably be used the other way. Enforced in code — [`bridge/privacy.py`](bridge/privacy.py), tested in [`tests/test_privacy.py`](tests/test_privacy.py):
 
-- Artists appear only as **salted HMAC pseudonyms**; real names never leave Kitsu. The exporter refuses to start with a guessable salt.
-- **No crew-load signal for a pool of fewer than 3 people** — below that, an "overloaded pool" alert is an alert about one person. Small pools are dropped, never merged into an "other" bucket that could be de-anonymised by elimination.
+- Artists appear only as **salted HMAC pseudonyms**; real names never leave the tracker. The exporter refuses to start with a guessable salt.
+- **No crew-load signal for a pool of fewer than three people** — below that, an "overloaded pool" alert is an alert about one person. Small pools are dropped, never merged into an "other" bucket that could be de-anonymised by elimination.
 - **No per-person output metric.** The system measures load and waste, never productivity.
-- **Every crunch alert must carry a lever** the supervisor can pull. An alert with no remediation is just pressure.
+- **Every crunch alert carries a lever** the supervisor can pull. An alert with no remediation is just pressure.
+
+The judge tier enforces the same line: a run that lets a below-floor pool name into an answer fails a test (`tests/test_evaluation.py`).
 
 ## Architecture
 
 ```
-Kitsu (gazu: task events + time-spents) ─┐
-                                          ├─► bridge/ ─► OTLP ─► Grafana Cloud
-OpenCue (Prometheus exporter :8302) ──────┘                      Tempo · Loki · Mimir
-                                                                 ML forecasts · Alerts
-                                                                        │ MCP
-                                                                        ▼
-                              Cloud Run: ADK multi-agent on Gemini (Vertex AI)
-                                Producer ─ ScheduleAnalyst · FarmAnalyst
-                                         ─ CrunchGuardian · Remediator [gated]
-                                mcp-grafana --disable-write  → analysts
-                                mcp-grafana  write-capable    → Remediator only
+  any tracker  ──►  bridge/  ──OTLP──►  Grafana Cloud  ◄──MCP──  agent/  ──►  Vertex AI
+  any farm          (relabel on         Tempo · Loki             ADK multi-       Gemini 2.5
+  any NLE cut        shot_id;            Mimir · Alerts           agent + judge    flash
+                     privacy floor)      ML forecasts
 ```
 
-Analysts are read-only **by construction**, not by prompt: they are wired to a
-`mcp-grafana` instance started with `--disable-write`. Only the Remediator can
-mutate anything, and every one of its calls is intercepted by an approval gate
-that shows the supervisor the full evidence chain — the exact queries, the
-annotation that started it, the forecast — before anything is written back to
-Kitsu or Grafana.
+```
+  agent/  Producer  ─ ScheduleAnalyst · FarmAnalyst · CrunchGuardian   (read-only, by construction)
+                    ─ Remediator                                       (gated: every write needs approval)
+                    ─ synthesis                                        (composes the answer; no tools)
+          + observability/   every run self-instruments (OpenTelemetry GenAI conventions) and
+                             scores its own answer (deterministic ground truth + an LLM judge)
+```
 
-## Status
+Analysts are read-only *by construction*, not by prompt — they are wired to an `mcp-grafana` instance started `--disable-write`. Only the Remediator can mutate anything, and every one of its calls is intercepted by an approval gate that shows the supervisor the full evidence chain — the exact queries, the annotation that started it, the forecast — before anything is written back.
 
-Under active development. Full technical reference, design decisions and
-progress: **[PROJECT.md](PROJECT.md)**.
+## What's built
 
-- [`bridge/`](bridge/) — ontology, privacy invariants, OTLP emitter. Complete and tested.
-- [`seed/`](seed/) — the simulated show. Complete; see [`seed/story.md`](seed/story.md)
-  for what the generated data actually shows, measured rather than asserted.
-- Next: metric backfill, dashboards and ML forecasts, then the agent layer.
+Full technical reference and design log: **[PROJECT.md](PROJECT.md)**. End-to-end setup (Grafana Cloud, Google Cloud, a real NLE): **[docs/SETUP.md](docs/SETUP.md)**.
 
-## Development
+| Part | State |
+|---|---|
+| [`bridge/`](bridge/) — ontology, privacy invariants, tool-agnostic source adapters, OTLP emitter | complete, tested |
+| [`seed/`](seed/) — the simulated show *Nightfall* ([`seed/story.md`](seed/story.md)) | complete; numbers measured, not asserted |
+| [`grafana/`](grafana/) — 4 dashboards, alert rules with a lever, Prophet + outlier ML jobs, an EvalOps surface | complete, provisioned by [`grafana/provision.py`](grafana/provision.py) |
+| [`agent/`](agent/) — the deterministic multi-agent pipeline, `mcp-grafana` in two modes (OSS / hosted OAuth), the gated write-back | complete |
+| [`observability/`](observability/) — the agent instruments itself with the OTel GenAI conventions | complete |
+| [`agent/evaluation.py`](agent/evaluation.py) — a deterministic judge + an LLM judge, emitted as `gen_ai.evaluation.result` | complete |
+| [`deploy/`](deploy/) — Cloud Run image + one-shot deploy script | scaffolding done; the deploy run needs `gcloud` + a project |
+
+## Running it
 
 ```bash
 uv sync --group dev
-uv run pytest
+uv run pytest            # 240+ tests, no credentials needed
 uv run ruff check .
 ```
 
-Ask the agent a question (needs a filled-in `.env` — see `.env.example`):
+Ask the agent a question (needs a filled-in `.env` — copy `.env.example`; [`docs/SETUP.md`](docs/SETUP.md) walks through Grafana Cloud and Vertex):
 
 ```bash
+set -a && source .env && set +a
 uv run python -m seed.populate
+uv run python -m grafana.provision
 uv run python -m agent.run "Why is SEQ0420 slipping, and what is it costing in artist-days?"
 ```
 
-Every run self-instruments with the OpenTelemetry GenAI conventions and scores
-its own answer (deterministic + LLM judge); the trace, token/latency histograms
-and `gen_ai.evaluation.result` events land in the same Grafana Cloud stack. A
-per-run Gemini-call ceiling (`TURNAROUND_MAX_LLM_CALLS`, default 40) caps token
-spend. Test plan and reproducibility contract: [`tests/TESTPLAN.md`](tests/TESTPLAN.md).
-
-## Deploy
-
-`agent/serve.py` is a FastAPI wrapper (`POST /ask`, `GET /healthz`) for Cloud
-Run. `deploy/deploy.sh` provisions a least-privilege runtime service account,
-pushes Grafana + OTLP credentials to Secret Manager, and deploys from
-`deploy/Dockerfile`. See [`deploy/README.md`](deploy/README.md).
+Every run self-instruments with the OpenTelemetry GenAI conventions and scores its own answer; the trace, token/latency histograms and `gen_ai.evaluation.result` events land in the same Grafana Cloud stack the agent queries. A per-run Gemini-call ceiling (`TURNAROUND_MAX_LLM_CALLS`, default 40) bounds token spend. Test plan and reproducibility contract: [`tests/TESTPLAN.md`](tests/TESTPLAN.md).
 
 ## Data provenance
 
-The show is **invented**: *Nightfall*, 200 shots over ~21 weeks, generated
-deterministically by [`seed/model.py`](seed/model.py). Nothing here derives from
-any studio's real production data.
+The show is **invented**: *Nightfall*, 200 shots over ~21 weeks, generated deterministically by [`seed/model.py`](seed/model.py). Nothing here derives from any studio's real production data.
 
-The generator simulates a *mechanism* rather than writing in a punchline. Two
-ordinary perturbations — a cache regression and a director note — are applied to
-a healthy show, and the iteration counts, render waste and crew hours are
-whatever falls out. Remove a beat from [`seed/show.yaml`](seed/show.yaml) and the
-numbers move on their own; forecasting a hard-coded constant would prove nothing.
+The generator simulates a *mechanism* rather than writing in a punchline. Two ordinary perturbations — a cache regression and a director note — are applied to an otherwise healthy show, and the iteration counts, render waste and crew hours are whatever falls out. Remove a beat from [`seed/show.yaml`](seed/show.yaml) and the numbers move on their own; forecasting a hard-coded constant would prove nothing.
 
-Job names follow OpenCue's real `<show>-<shot>-<user>_<name>` convention and are
-round-tripped through the production parser in the test suite, so the join is
-exercised on generated data exactly as it would be on a real farm.
+Job names follow OpenCue's real `<show>-<shot>-<user>_<name>` convention and round-trip through the production parser in the test suite, so the join is exercised on generated data exactly as it would be on a real farm.
 
-Source adapters sit behind the three Protocols in `bridge/sources.py`, so a live
-Kitsu / ShotGrid / ftrack tracker and an OpenCue / Deadline / Tractor / Qube!
-farm drop in without a rewrite — see **Supported tools** above.
+## About this project
+
+I build things at the seam between systems that were never meant to talk to each other — that is where the interesting problems, and usually the wasted human effort, tend to hide. Turnaround started as an entry for the Agentic Cinema hackathon (Grafana Labs track) and kept going because the underlying idea holds up: an industry with a well-documented burnout problem is sitting on the data that predicts it, in tools it already runs.
+
+The stance is deliberate on both axes. **Technology-agnostic**, because asking a studio to switch trackers or render managers to adopt a diagnostic tool is a non-starter — so the join asks for the least it possibly can, and the adapters are small. **Built for the people doing the work**, because the same measurements can be pointed at a crew to squeeze them harder, and this one is engineered so that is difficult on purpose: pseudonyms, an aggregation floor, no productivity metric, and every alert obliged to carry a fix.
+
+Contributions, corrections and "we tried this against our Deadline farm and…" reports are all welcome.
 
 ## Licence
 
