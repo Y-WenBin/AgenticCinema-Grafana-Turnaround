@@ -27,9 +27,32 @@ That join does not exist in any product on the market.
 
 ## The join
 
-OpenCue's PyOutline names every job `<show>-<shot>-<user>_<name>`. **The shot id is already in the farm's telemetry.** Turnaround parses it and relabels farm metrics onto `shot_id` / `sequence` / `department`, so a single PromQL query spans the creative schedule and the compute that serves it.
+Every render manager puts the shot id somewhere in the job name — OpenCue's
+PyOutline uses `<show>-<shot>-<user>_<name>`. **The shot id is already in the
+farm's telemetry.** Turnaround parses it and relabels farm metrics onto
+`shot_id` / `sequence` / `department`, so a single PromQL query spans the
+creative schedule and the compute that serves it.
 
-Everything else in the product follows from that one relabel. See [`bridge/ontology.py`](bridge/ontology.py).
+Everything else in the product follows from that one relabel. See
+[`bridge/ontology.py`](bridge/ontology.py) — the parser ships conventions for
+OpenCue, Deadline, Tractor, Qube! and Royal Render, plus a `template` mode for a
+studio regex, and the shot-id spelling itself is a configurable `ShotIdScheme`.
+
+## Supported tools
+
+The join needs a shot id and a task status; those are the only things Turnaround
+asks of a studio's stack. Adapters are three narrow Protocols in
+[`bridge/sources.py`](bridge/sources.py) (`SUPPORTED_TOOLS` is the full list);
+Kitsu and OpenCue are the in-tree reference implementations.
+
+| Layer | Native | Works via a ready parser / mapping |
+|---|---|---|
+| **Schedule / tracker** | Kitsu (`gazu`) | ShotGrid / Flow Production Tracking, ftrack (status codes normalised by `TaskStatus.from_tracker`); any tracker via CSV export (`CsvScheduleSource`) |
+| **Render farm** | OpenCue | Deadline, Tractor, Qube!, Royal Render (`parse_job_name`); Slurm / bespoke via `TURNAROUND_FARM_JOB_PATTERN` |
+| **Editorial / NLE** | EDL (CMX3600) — [`bridge/editorial.py`](bridge/editorial.py) | Avid, Premiere, DaVinci Resolve, Final Cut via OpenTimelineIO (`pip install 'turnaround[editorial]'`) |
+
+Configure with `TURNAROUND_SHOT_ID_SCHEME`, `TURNAROUND_FARM_CONVENTION`,
+`TURNAROUND_FARM_JOB_PATTERN`. Tests: [`tests/test_conventions.py`](tests/test_conventions.py).
 
 ## The ontology
 
@@ -132,8 +155,9 @@ Job names follow OpenCue's real `<show>-<shot>-<user>_<name>` convention and are
 round-tripped through the production parser in the test suite, so the join is
 exercised on generated data exactly as it would be on a real farm.
 
-Source adapters sit behind an interface so live Kitsu and OpenCue instances drop
-in without a rewrite.
+Source adapters sit behind the three Protocols in `bridge/sources.py`, so a live
+Kitsu / ShotGrid / ftrack tracker and an OpenCue / Deadline / Tractor / Qube!
+farm drop in without a rewrite — see **Supported tools** above.
 
 ## Licence
 

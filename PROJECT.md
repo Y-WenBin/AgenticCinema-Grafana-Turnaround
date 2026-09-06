@@ -626,10 +626,38 @@ present. `tests/test_mcp_grafana.py`.
   validation, submission compliance, deploy context excludes secrets.
   **Suite 167 → 188.**
 
+### Tool coverage — trackers, farms, NLEs (2026-09-06)
+
+The join needs a shot id and a task status; that is all Turnaround asks of a
+studio's stack, so it is not Kitsu+OpenCue-only.
+
+- **`bridge/ontology.py`** — `parse_job_name(convention=...)` ships regex
+  conventions for OpenCue (default, unchanged), Deadline, Tractor, Qube! and
+  Royal Render, plus a `template` mode reading `TURNAROUND_FARM_JOB_PATTERN`.
+  Shot-id spelling is a configurable `ShotIdScheme` (`seq_sh` default, plus
+  `numeric` / `dash` / `loose`; `TURNAROUND_SHOT_ID_SCHEME`). `TaskStatus.from_kitsu`
+  is now `from_tracker` (alias kept) and recognises ShotGrid / Flow Production
+  Tracking / ftrack vocab (`cbb`, `rev`, `apr`, "Changes Requested", ...), with
+  3-letter codes matched exactly so `ip` does not fire on "Shipping".
+- **`bridge/sources.py`** (new) — `ScheduleSource` / `FarmSource` /
+  `EditorialSource` Protocols + normalised event dataclasses; `SUPPORTED_TOOLS`
+  is the honest coverage list (native / parser / mapping / alias per tool);
+  `CsvScheduleSource` ingests a `shot,status,pool,hours` export from any tracker
+  with no Python client.
+- **`bridge/editorial.py`** (new) — CMX3600 EDL parser (pure stdlib; every NLE
+  exports EDL) mapping clips to shot ids via the active scheme, tolerant of
+  dissolve/transition columns; optional `iter_otio_cut` behind
+  `pip install 'turnaround[editorial]'` for Avid / Premiere / Resolve / FCP via
+  OpenTimelineIO.
+- **`tests/test_conventions.py`** (new, 40 tests). No vendor SDK is imported by
+  the bridge; an adapter pulls its own in its own module. **Suite 228.**
+
 ### Not started
 
 Supervisor console (folds into the Scenes App Plugin, Horizon B) · Cloud Run
-deploy *run* (scaffolding done; needs `gcloud` + a GCP project) · demo video.
+deploy *run* (scaffolding done; needs `gcloud` + a GCP project) · demo video ·
+thin live adapters for ShotGrid / ftrack / Deadline (the parsers and Protocols
+are in; the API clients are not wired).
 
 ### Deferred by decision
 

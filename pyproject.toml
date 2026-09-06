@@ -26,6 +26,11 @@ dependencies = [
   "pyyaml>=6.0",
 ]
 
+[project.optional-dependencies]
+# Editorial ingest from any NLE that round-trips OpenTimelineIO (Avid, Premiere,
+# Resolve, Final Cut). EDL parsing needs nothing extra -- see bridge/editorial.py.
+editorial = ["opentimelineio>=0.17"]
+
 [dependency-groups]
 dev = ["pytest>=8.0", "ruff>=0.8"]
 
