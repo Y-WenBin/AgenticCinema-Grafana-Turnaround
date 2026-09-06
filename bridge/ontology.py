@@ -22,8 +22,9 @@ a real studio are owned by different departments and never joined.
 
 from __future__ import annotations
 
+import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 # --------------------------------------------------------------------------
@@ -50,7 +51,7 @@ class Department(str, Enum):
     def order(self) -> int:
         return _DEPARTMENT_ORDER[self]
 
-    def upstream(self) -> tuple["Department", ...]:
+    def upstream(self) -> tuple[Department, ...]:
         """Stages this one depends on. Used to attribute a slip to its origin."""
         return tuple(d for d in Department if d.order < self.order)
 
@@ -65,10 +66,13 @@ RENDERING_DEPARTMENTS = frozenset(
 
 
 class TaskStatus(str, Enum):
-    """Kitsu task statuses, normalised.
+    """A production task status, normalised across trackers.
 
-    A studio can rename these freely in Kitsu, so `from_kitsu` matches loosely
-    rather than requiring an exact vocabulary.
+    Every tracker (Kitsu, ShotGrid / Flow Production Tracking, ftrack, or a
+    studio's own) lets a coordinator rename statuses freely, so `from_tracker`
+    matches loosely on well-known stems and short codes rather than requiring an
+    exact vocabulary. The one status that matters for this product is RETAKE --
+    work that must be redone -- so its synonyms are the most thorough.
     """
 
     TODO = "todo"
@@ -78,12 +82,21 @@ class TaskStatus(str, Enum):
     DONE = "done"
 
     @classmethod
-    def from_kitsu(cls, short_name: str) -> "TaskStatus":
+    def from_tracker(cls, short_name: str) -> TaskStatus:
+        """Normalise a tracker status name or short code (case/space/underscore
+        insensitive). Unknown values fall back to TODO -- the safe default,
+        since an unrecognised status has not been shown to be rework or done."""
         key = re.sub(r"[^a-z]", "", (short_name or "").lower())
-        for pattern, status in _KITSU_STATUS_PATTERNS:
-            if pattern in key:
+        for pattern, status in _STATUS_PATTERNS:
+            # 3-letter tracker codes (ip, rev, apr, cbb, ...) match the whole
+            # key only; longer stems match as a substring of it.
+            exact = len(pattern) <= 3
+            if (key == pattern) if exact else (pattern in key):
                 return status
         return cls.TODO
+
+    #: Back-compat alias; Kitsu is still the reference tracker.
+    from_kitsu = from_tracker
 
     @property
     def is_terminal(self) -> bool:
@@ -100,20 +113,50 @@ class TaskStatus(str, Enum):
         return self is TaskStatus.RETAKE
 
 
-# Ordered: first match wins, so more specific patterns come first.
-_KITSU_STATUS_PATTERNS: list[tuple[str, TaskStatus]] = [
+# Ordered: first match wins, so more specific patterns come first. Covers Kitsu,
+# ShotGrid / Flow Production Tracking (three-letter codes: rev, cbb, apr, fin,
+# ip, hld, omt, rdy), ftrack ("changes requested", "awaiting approval") and the
+# common free-text variants.
+_STATUS_PATTERNS: list[tuple[str, TaskStatus]] = [
+    ("changesrequested", TaskStatus.RETAKE),
     ("retake", TaskStatus.RETAKE),
     ("reject", TaskStatus.RETAKE),
+    ("redo", TaskStatus.RETAKE),
+    ("kickback", TaskStatus.RETAKE),
+    ("cbb", TaskStatus.RETAKE),               # ShotGrid "could be better"
+    ("notestoaddress", TaskStatus.RETAKE),
+    ("awaitingapproval", TaskStatus.WAITING_FOR_APPROVAL),
     ("waitingforapproval", TaskStatus.WAITING_FOR_APPROVAL),
+    ("pendingreview", TaskStatus.WAITING_FOR_APPROVAL),
     ("wfa", TaskStatus.WAITING_FOR_APPROVAL),
     ("review", TaskStatus.WAITING_FOR_APPROVAL),
+    ("rev", TaskStatus.WAITING_FOR_APPROVAL),
+    ("submitted", TaskStatus.WAITING_FOR_APPROVAL),
     ("approved", TaskStatus.DONE),
+    ("apr", TaskStatus.DONE),
     ("done", TaskStatus.DONE),
     ("final", TaskStatus.DONE),
-    ("wip", TaskStatus.WIP),
+    ("fin", TaskStatus.DONE),
+    ("complete", TaskStatus.DONE),
+    ("delivered", TaskStatus.DONE),
+    ("omit", TaskStatus.DONE),                # ShotGrid "omt" -- cut, not our concern
+    ("omt", TaskStatus.DONE),
+    ("notstarted", TaskStatus.TODO),
     ("inprogress", TaskStatus.WIP),
+    ("workinprogress", TaskStatus.WIP),
+    ("wip", TaskStatus.WIP),
+    ("ip", TaskStatus.WIP),
+    ("hold", TaskStatus.TODO),
+    ("hld", TaskStatus.TODO),
+    ("blocked", TaskStatus.TODO),
+    ("onhold", TaskStatus.TODO),
+    ("ready", TaskStatus.TODO),
+    ("rdy", TaskStatus.TODO),
     ("todo", TaskStatus.TODO),
 ]
+
+#: Deprecated name kept so external imports do not break.
+_KITSU_STATUS_PATTERNS = _STATUS_PATTERNS
 
 #: OpenTelemetry span status per task status. A retake is genuinely an error in
 #: the trace sense: work that had to be repeated. Modelling it this way means
@@ -124,10 +167,64 @@ SPAN_STATUS_ERROR = frozenset({TaskStatus.RETAKE})
 # --------------------------------------------------------------------------
 # Shot identity
 # --------------------------------------------------------------------------
+#
+# Every studio spells a shot id differently -- "SEQ0420_SH0100" here, but also
+# "0420_0100", "sq420-sh100", "A012_015". A ShotIdScheme captures one spelling:
+# a regex with `sequence` and `shot` groups, plus a template to rebuild the id.
+# The active scheme is picked once from TURNAROUND_SHOT_ID_SCHEME (default
+# "seq_sh"), so a studio configures its convention without touching code.
 
-#: Canonical shot id, e.g. "SEQ0420_SH0100". The sequence prefix is part of the
-#: id so that sequence-level rollups need no lookup table.
-SHOT_ID_RE = re.compile(r"^(?P<sequence>SEQ\d{4})_(?P<shot>SH\d{4})$")
+
+@dataclass(frozen=True, slots=True)
+class ShotIdScheme:
+    name: str
+    pattern: re.Pattern[str]
+    template: str  # uses {sequence} and {shot}
+
+    def match(self, shot_id: str) -> tuple[str, str] | None:
+        m = self.pattern.match(shot_id or "")
+        return (m["sequence"], m["shot"]) if m else None
+
+    def sequence(self, shot_id: str) -> str | None:
+        got = self.match(shot_id)
+        return got[0] if got else None
+
+    def format(self, sequence: str, shot: str) -> str:
+        return self.template.format(sequence=sequence, shot=shot)
+
+
+SHOT_ID_SCHEMES: dict[str, ShotIdScheme] = {
+    # the project default: SEQ0420_SH0100
+    "seq_sh": ShotIdScheme(
+        "seq_sh", re.compile(r"^(?P<sequence>SEQ\d{4})_(?P<shot>SH\d{4})$"),
+        "{sequence}_{shot}"),
+    # ShotGrid / Flow Production Tracking style: 0420_0100
+    "numeric": ShotIdScheme(
+        "numeric", re.compile(r"^(?P<sequence>\d{2,4})_(?P<shot>\d{2,4})$"),
+        "{sequence}_{shot}"),
+    # hyphen-joined, alphanumeric sequence and shot codes: SQ042-SH0100, A012-015
+    "dash": ShotIdScheme(
+        "dash", re.compile(r"^(?P<sequence>[A-Za-z]{0,4}\d{1,4})-(?P<shot>[A-Za-z]{0,4}\d{1,4})$"),
+        "{sequence}-{shot}"),
+    # underscore-joined, alphanumeric: sq0420_sh0100, ep02sq10_sh020
+    "loose": ShotIdScheme(
+        "loose", re.compile(r"^(?P<sequence>[A-Za-z0-9]+?)_(?P<shot>[A-Za-z]{0,4}\d{1,4})$"),
+        "{sequence}_{shot}"),
+}
+
+
+def _scheme_from_env() -> ShotIdScheme:
+    want = os.environ.get("TURNAROUND_SHOT_ID_SCHEME", "seq_sh").strip().lower()
+    return SHOT_ID_SCHEMES.get(want, SHOT_ID_SCHEMES["seq_sh"])
+
+
+#: Resolved once at import. A studio sets TURNAROUND_SHOT_ID_SCHEME to one of
+#: SHOT_ID_SCHEMES, or registers its own ShotIdScheme before import.
+DEFAULT_SHOT_ID_SCHEME = _scheme_from_env()
+
+#: Back-compat: the default scheme's compiled pattern. Existing callers that
+#: imported SHOT_ID_RE keep working; new code should use a ShotIdScheme.
+SHOT_ID_RE = DEFAULT_SHOT_ID_SCHEME.pattern
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,25 +232,29 @@ class ShotRef:
     show: str
     sequence: str
     shot: str
+    scheme: ShotIdScheme = field(default=DEFAULT_SHOT_ID_SCHEME, compare=False, repr=False)
 
     @property
     def shot_id(self) -> str:
-        return f"{self.sequence}_{self.shot}"
+        return self.scheme.format(self.sequence, self.shot)
 
     @classmethod
-    def parse(cls, show: str, shot_id: str) -> "ShotRef":
-        m = SHOT_ID_RE.match(shot_id)
-        if not m:
-            raise ValueError(f"not a canonical shot id: {shot_id!r}")
-        return cls(show=show, sequence=m["sequence"], shot=m["shot"])
+    def parse(cls, show: str, shot_id: str,
+              scheme: ShotIdScheme | None = None) -> ShotRef:
+        scheme = scheme or DEFAULT_SHOT_ID_SCHEME
+        got = scheme.match(shot_id)
+        if not got:
+            raise ValueError(f"not a {scheme.name} shot id: {shot_id!r}")
+        return cls(show=show, sequence=got[0], shot=got[1], scheme=scheme)
 
 
-def sequence_of(shot_id: str) -> str:
+def sequence_of(shot_id: str, scheme: ShotIdScheme | None = None) -> str:
     """Sequence for a shot id, without constructing a ShotRef."""
-    m = SHOT_ID_RE.match(shot_id)
-    if not m:
-        raise ValueError(f"not a canonical shot id: {shot_id!r}")
-    return m["sequence"]
+    scheme = scheme or DEFAULT_SHOT_ID_SCHEME
+    seq = scheme.sequence(shot_id)
+    if seq is None:
+        raise ValueError(f"not a {scheme.name} shot id: {shot_id!r}")
+    return seq
 
 
 # --------------------------------------------------------------------------
@@ -182,10 +283,11 @@ class JobRef:
     name: str
     department: Department | None
     version: int | None
+    scheme: ShotIdScheme = field(default=None, compare=False, repr=False)  # type: ignore[assignment]
 
     @property
     def sequence(self) -> str:
-        return sequence_of(self.shot_id)
+        return sequence_of(self.shot_id, self.scheme or DEFAULT_SHOT_ID_SCHEME)
 
 
 def parse_opencue_job_name(job_name: str) -> JobRef | None:
@@ -232,6 +334,137 @@ def format_opencue_job_name(
     tested end to end rather than assumed.
     """
     return f"{show}-{shot_id}-{user}_{department.value}_v{version:03d}"
+
+
+# --------------------------------------------------------------------------
+# The join, generalised: any render manager's job name -> shot
+# --------------------------------------------------------------------------
+#
+# OpenCue is the reference farm, but the same relabel-on-shot-id trick works for
+# every render manager -- they all put the shot somewhere in the job or batch
+# name. A FarmConvention is one manager's naming pattern; the shot id it pulls
+# out is validated against the active ShotIdScheme, so a job that does not name a
+# real shot (farm maintenance, a bake, a tool test) resolves to None and the tap
+# drops it, exactly as with OpenCue.
+
+#: Short department codes seen in job/scene names across studios, mapped to the
+#: canonical pipeline stage. Unknown codes (matchmove, roto, paint, ...) stay
+#: None -- still attributable to a shot, just not to a stage we model.
+_DEPT_ALIASES: dict[str, Department] = {
+    "pvz": Department.PREVIZ, "pv": Department.PREVIZ, "prev": Department.PREVIZ,
+    "lay": Department.LAYOUT, "lyt": Department.LAYOUT,
+    "anm": Department.ANIM, "ani": Department.ANIM, "anim": Department.ANIM,
+    "efx": Department.FX, "fx": Department.FX, "sim": Department.FX,
+    "lgt": Department.LIGHTING, "light": Department.LIGHTING, "lit": Department.LIGHTING,
+    "cmp": Department.COMP, "comp": Department.COMP, "cmpst": Department.COMP,
+    "di": Department.DI, "difinish": Department.DI, "grade": Department.DI,
+}
+
+
+def department_from_token(token: str) -> Department | None:
+    """Resolve a department name or short code, or None if it is not a stage
+    this pipeline models."""
+    key = re.sub(r"[^a-z]", "", (token or "").lower())
+    if not key:
+        return None
+    try:
+        return Department(key)
+    except ValueError:
+        return _DEPT_ALIASES.get(key)
+
+
+# A permissive shot-id token for the built-in patterns: letters then digits,
+# a separator, letters then digits -- "SEQ0420_SH0100", "0420-0100", "a12_015".
+# What it captures is always re-validated by the active ShotIdScheme.
+_SHOT_TOKEN = r"[A-Za-z]{0,4}\d{1,4}[_-][A-Za-z]{0,4}\d{1,4}"
+_VER = r"(?:[ ._/v-]+v?(?P<version>\d{1,4}))?"
+_DEPT = r"(?P<dept>[A-Za-z]{2,12})"
+
+
+class FarmConvention(str, Enum):
+    OPENCUE = "opencue"          # <show>-<shot>-<user>_<dept>_v###   (PyOutline)
+    DEADLINE = "deadline"        # <shot> <dept> v###  /  <shot>_<dept>_v###
+    TRACTOR = "tractor"          # [show] <shot> <dept> [v###]        (job title)
+    QUBE = "qube"                # <shot>_<dept>[_v###]
+    ROYALRENDER = "royalrender"  # <shot>.<dept>[.v###]  (scene stem)
+    TEMPLATE = "template"        # TURNAROUND_FARM_JOB_PATTERN regex
+
+
+_CONVENTION_PATTERNS: dict[FarmConvention, re.Pattern[str]] = {
+    FarmConvention.DEADLINE: re.compile(
+        rf"(?P<shot_id>{_SHOT_TOKEN})[ _/-]+{_DEPT}{_VER}", re.IGNORECASE),
+    FarmConvention.TRACTOR: re.compile(
+        rf"(?:(?P<show>\S+)\s+)?(?P<shot_id>{_SHOT_TOKEN})\s+{_DEPT}{_VER}", re.IGNORECASE),
+    FarmConvention.QUBE: re.compile(
+        rf"(?P<shot_id>{_SHOT_TOKEN})_{_DEPT}{_VER}", re.IGNORECASE),
+    FarmConvention.ROYALRENDER: re.compile(
+        rf"(?P<shot_id>{_SHOT_TOKEN})[._]{_DEPT}{_VER}", re.IGNORECASE),
+}
+
+
+def _template_pattern() -> re.Pattern[str] | None:
+    raw = os.environ.get("TURNAROUND_FARM_JOB_PATTERN", "").strip()
+    if not raw:
+        return None
+    try:
+        return re.compile(raw)
+    except re.error:
+        return None
+
+
+def _default_farm_convention() -> FarmConvention:
+    want = os.environ.get("TURNAROUND_FARM_CONVENTION", "opencue").strip().lower()
+    try:
+        return FarmConvention(want)
+    except ValueError:
+        return FarmConvention.OPENCUE
+
+
+DEFAULT_FARM_CONVENTION = _default_farm_convention()
+
+
+def parse_job_name(
+    job_name: str,
+    *,
+    convention: FarmConvention | str | None = None,
+    scheme: ShotIdScheme | None = None,
+) -> JobRef | None:
+    """Resolve a render-manager job (or batch) name to the shot it serves.
+
+    ``convention`` defaults to ``TURNAROUND_FARM_CONVENTION`` (``opencue``).
+    ``scheme`` defaults to the active ``ShotIdScheme``. Returns None when the
+    name does not carry a real shot id -- a bake, a tool test, farm maintenance.
+    """
+    conv = FarmConvention(convention) if convention else DEFAULT_FARM_CONVENTION
+    if conv is FarmConvention.OPENCUE:
+        return parse_opencue_job_name(job_name)
+
+    pattern = _template_pattern() if conv is FarmConvention.TEMPLATE \
+        else _CONVENTION_PATTERNS[conv]
+    if pattern is None:
+        return None
+    m = pattern.search((job_name or "").strip())
+    if not m:
+        return None
+
+    gd = m.groupdict()
+    scheme = scheme or DEFAULT_SHOT_ID_SCHEME
+    shot_id = gd.get("shot_id")
+    if not shot_id and gd.get("sequence") and gd.get("shot"):
+        shot_id = scheme.format(gd["sequence"], gd["shot"])
+    if not shot_id or scheme.sequence(shot_id) is None:
+        return None
+
+    version = int(gd["version"]) if gd.get("version") else None
+    return JobRef(
+        show=gd.get("show") or "",
+        shot_id=shot_id,
+        user=gd.get("user") or "",
+        name=gd.get("name") or job_name,
+        department=department_from_token(gd.get("dept") or ""),
+        version=version,
+        scheme=scheme,
+    )
 
 
 # --------------------------------------------------------------------------
