@@ -63,6 +63,21 @@ PRODUCER_MODEL = os.environ.get("TURNAROUND_GEMINI_MODEL_PRO", ANALYST_MODEL)
 # --------------------------------------------------------------------------- #
 
 
+#: How the agents reach Grafana's MCP tools.
+#:  "oss"    -- a local ``grafana/mcp-grafana`` stdio subprocess with a service
+#:             account token. Read-only is enforced *by construction*
+#:             (``--disable-write``); runs unattended, so this is the default and
+#:             the deployed/demo path.
+#:  "hosted" -- the hosted ``https://mcp.grafana.com/mcp`` endpoint over
+#:             Streamable HTTP with OAuth 2.1 (see ``agent/mcp_login.py``). No
+#:             service-account path, so it cannot run unattended; offered as an
+#:             opt-in mode that exercises the interactive-authorization flow the
+#:             proposal calls for. Read-only is then enforced by ``tool_filter``
+#:             plus the approval gate, not by a flag.
+MCP_MODE = os.environ.get("TURNAROUND_MCP_MODE", "oss").strip().lower()
+HOSTED_MCP_URL = "https://mcp.grafana.com/mcp"
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     grafana_url: str
@@ -70,6 +85,8 @@ class Settings:
     gcp_project: str
     gcp_location: str
     mcp_grafana_bin: str
+    mcp_mode: str = "oss"
+    grafana_cloud_mcp_token: str = ""
     ds_prom: str = "grafanacloud-prom"
     ds_loki: str = "grafanacloud-logs"
     ds_tempo: str = "grafanacloud-traces"
@@ -81,6 +98,10 @@ class Settings:
     @property
     def vertex_ready(self) -> bool:
         return bool(self.gcp_project)
+
+    @property
+    def hosted_mcp(self) -> bool:
+        return self.mcp_mode == "hosted"
 
 
 def _find_mcp_grafana() -> str:
@@ -111,10 +132,25 @@ def settings() -> Settings:
         gcp_project=os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
         gcp_location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"),
         mcp_grafana_bin=_find_mcp_grafana(),
+        mcp_mode="hosted" if os.environ.get("TURNAROUND_MCP_MODE", "oss").strip().lower()
+        == "hosted" else "oss",
+        grafana_cloud_mcp_token=os.environ.get("GRAFANA_CLOUD_MCP_TOKEN", "")
+        or _read_token_file(),
         ds_prom=os.environ.get("GRAFANA_DS_PROM_UID", "grafanacloud-prom"),
         ds_loki=os.environ.get("GRAFANA_DS_LOKI_UID", "grafanacloud-logs"),
         ds_tempo=os.environ.get("GRAFANA_DS_TEMPO_UID", "grafanacloud-traces"),
     )
+
+
+#: where ``agent/mcp_login.py`` drops the bearer token from the OAuth flow
+CLOUD_MCP_TOKEN_FILE = REPO_ROOT / ".secrets" / "grafana-cloud-mcp-token"
+
+
+def _read_token_file() -> str:
+    try:
+        return CLOUD_MCP_TOKEN_FILE.read_text().strip()
+    except OSError:
+        return ""
 
 
 def bootstrap_vertex() -> Settings:

@@ -137,5 +137,176 @@
         }
       }
     ]
+  },
+  {
+    "title": "turnaround-evalops",
+    "folderUid": "turnaround",
+    "interval": 60,
+    "rules": [
+      {
+        "uid": "turnaround-eval-grounding-drift",
+        "title": "Agent answers are drifting off their evidence",
+        "condition": "C",
+        "for": "0s",
+        "folderUID": "turnaround",
+        "ruleGroup": "turnaround-evalops",
+        "noDataState": "OK",
+        "execErrState": "Error",
+        "data": [
+          {
+            "refId": "A",
+            "relativeTimeRange": {
+              "from": 3600,
+              "to": 0
+            },
+            "datasourceUid": "grafanacloud-logs",
+            "model": {
+              "refId": "A",
+              "expr": "avg_over_time({service_name=\"turnaround-agent\"} | json | name=\"hallucination\" | unwrap score [1h])",
+              "queryType": "range",
+              "editorMode": "code",
+              "intervalMs": 1000,
+              "maxDataPoints": 43200,
+              "datasource": {
+                "type": "loki",
+                "uid": "grafanacloud-logs"
+              }
+            }
+          },
+          {
+            "refId": "B",
+            "datasourceUid": "__expr__",
+            "model": {
+              "refId": "B",
+              "type": "reduce",
+              "expression": "A",
+              "reducer": "last",
+              "datasource": {
+                "type": "__expr__",
+                "uid": "__expr__"
+              },
+              "settings": {
+                "mode": "dropNN"
+              }
+            }
+          },
+          {
+            "refId": "C",
+            "datasourceUid": "__expr__",
+            "model": {
+              "refId": "C",
+              "type": "threshold",
+              "expression": "B",
+              "datasource": {
+                "type": "__expr__",
+                "uid": "__expr__"
+              },
+              "conditions": [
+                {
+                  "type": "query",
+                  "evaluator": {
+                    "type": "lt",
+                    "params": [
+                      0.8
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "labels": {
+          "severity": "warning",
+          "team": "ai-eng",
+          "signal": "eval-drift"
+        },
+        "annotations": {
+          "summary": "Mean grounding score over the last hour is {{ printf \"%.2f\" $values.B.Value }} (< 0.80): the agent is asserting numbers the tool timeline does not support.",
+          "lever": "Open Turnaround \u00b7 EvalOps, sort the events table by score, and follow the response_id link to the run's trace. The failing claim is in the synthesis step's chat span; tighten the analyst prompt that fed it or the recipe it used."
+        }
+      },
+      {
+        "uid": "turnaround-eval-privacy-breach",
+        "title": "A sub-floor pool was named in an answer",
+        "condition": "C",
+        "for": "0s",
+        "folderUID": "turnaround",
+        "ruleGroup": "turnaround-evalops",
+        "noDataState": "OK",
+        "execErrState": "Error",
+        "data": [
+          {
+            "refId": "A",
+            "relativeTimeRange": {
+              "from": 3600,
+              "to": 0
+            },
+            "datasourceUid": "grafanacloud-logs",
+            "model": {
+              "refId": "A",
+              "expr": "sum(count_over_time({service_name=\"turnaround-agent\"} | json | name=\"privacy_floor_respected\" | label=\"fail\" [1h]))",
+              "queryType": "range",
+              "editorMode": "code",
+              "intervalMs": 1000,
+              "maxDataPoints": 43200,
+              "datasource": {
+                "type": "loki",
+                "uid": "grafanacloud-logs"
+              }
+            }
+          },
+          {
+            "refId": "B",
+            "datasourceUid": "__expr__",
+            "model": {
+              "refId": "B",
+              "type": "reduce",
+              "expression": "A",
+              "reducer": "last",
+              "datasource": {
+                "type": "__expr__",
+                "uid": "__expr__"
+              },
+              "settings": {
+                "mode": "dropNN"
+              }
+            }
+          },
+          {
+            "refId": "C",
+            "datasourceUid": "__expr__",
+            "model": {
+              "refId": "C",
+              "type": "threshold",
+              "expression": "B",
+              "datasource": {
+                "type": "__expr__",
+                "uid": "__expr__"
+              },
+              "conditions": [
+                {
+                  "type": "query",
+                  "evaluator": {
+                    "type": "gt",
+                    "params": [
+                      0
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "labels": {
+          "severity": "critical",
+          "team": "ai-eng",
+          "signal": "privacy-floor"
+        },
+        "annotations": {
+          "summary": "{{ printf \"%.0f\" $values.B.Value }} answer(s) in the last hour named a pool below the aggregation floor of 3. This is the one invariant the product cannot break.",
+          "lever": "Stop demoing. Pull the run from Turnaround \u00b7 EvalOps, confirm which pool leaked, and check bridge/privacy.py plus the CrunchGuardian prompt -- the floor join in vocabulary.py should have made this impossible."
+        }
+      }
+    ]
   }
 ]

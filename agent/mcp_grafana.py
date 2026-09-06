@@ -1,31 +1,35 @@
-"""``mcp-grafana`` toolsets for the agents.
+"""``mcp-grafana`` toolsets for the agents, in one of two modes (``agent/config.py``).
 
-Two instances of the OSS ``grafana/mcp-grafana`` server, run as stdio
-subprocesses (the transport ADK spawns and owns directly -- no ports, one less
-moving part for the Cloud Run image):
+**oss** (default, deployed path). Two instances of OSS ``grafana/mcp-grafana``
+run as stdio subprocesses ADK spawns and owns -- no ports:
 
-* **analyst** -- ``--disable-write``. Read-only *by construction*. Every analyst
-  agent gets this one, narrowed further with ``tool_filter`` so the model sees
-  ten relevant tools instead of sixty-six.
-* **remediator** -- ``--enabled-tools annotations,incident``. Write-capable, but
-  only for annotations and incidents; it cannot touch dashboards, datasources or
-  alert rules. Attached to the Remediator alone, and every call still passes the
-  approval gate first.
+* **analyst** -- ``--disable-write``. Read-only *by construction*: a
+  prompt-injected "change X" has nothing to call.
+* **remediator** -- ``--enabled-tools annotations,incident``. Write-capable for
+  annotations and incidents only; every call still passes the approval gate.
 
-The hosted Grafana Cloud MCP endpoint is interactive-OAuth only with no
-service-account path (PROJECT.md section 2), which is why this is the OSS server
-with a service-account token rather than a remote URL.
+**hosted** (opt-in). The hosted ``https://mcp.grafana.com/mcp`` endpoint over
+Streamable HTTP, the Grafana instance passed in the ``X-Grafana-URL`` header and
+a bearer token from the OAuth 2.1 flow (``agent/mcp_login.py``). The hosted
+endpoint has **no service-account path**, so this mode cannot run unattended --
+it is here to exercise the interactive-authorization flow, not to deploy.
+There is no ``--disable-write`` server to lean on, so in hosted mode read-only
+is enforced by ``tool_filter`` and the approval gate alone; the privilege split
+is a filter, not a separate process.
 """
 
 from __future__ import annotations
 
 import os
 
-from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
+from google.adk.tools.mcp_tool.mcp_session_manager import (
+    StdioConnectionParams,
+    StreamableHTTPConnectionParams,
+)
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 from mcp import StdioServerParameters
 
-from agent.config import Settings
+from agent.config import HOSTED_MCP_URL, Settings
 
 # The read tools each analyst is allowed to see. All three share a common read
 # core (Prometheus + Loki + discovery + annotations + alerts); the FarmAnalyst
@@ -48,15 +52,19 @@ CRUNCH_TOOLS = list(_READ_CORE)
 REMEDIATOR_WRITE_TOOLS = ["create_annotation", "update_annotation", "add_activity_to_incident"]
 
 
-def _env(cfg: Settings) -> dict[str, str]:
-    """Environment for the subprocess: inherit, drop the parent's OTLP config,
-    pin what mcp-grafana needs.
+class HostedMcpNotAuthorized(RuntimeError):
+    """Hosted mode was selected but no Cloud MCP bearer token is available."""
 
-    The agent process inherits the seeder's ``OTEL_EXPORTER_OTLP_*`` variables
-    from ``.env``; if mcp-grafana sees them it tries to export its own telemetry
-    over gRPC to a collector that is not there and prints ten seconds of ALPN
-    handshake errors. Strip every ``OTEL_*`` and disable the SDK. Phase 6 points
-    mcp-grafana at our gateway on purpose (AI Observability); until then, off.
+
+def _env(cfg: Settings) -> dict[str, str]:
+    """Environment for the stdio subprocess: inherit, drop the parent's OTLP
+    config, pin what mcp-grafana needs.
+
+    The agent process inherits the seeder's ``OTEL_EXPORTER_OTLP_*`` variables;
+    if mcp-grafana sees them it tries to export its own telemetry over gRPC to a
+    collector that is not there and prints ten seconds of ALPN handshake errors.
+    Strip every ``OTEL_*`` and disable the SDK. (``observability/`` instruments
+    the ADK process directly, not this subprocess.)
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith("OTEL_")}
     env["GRAFANA_URL"] = cfg.grafana_url
@@ -65,31 +73,59 @@ def _env(cfg: Settings) -> dict[str, str]:
     return env
 
 
-def _toolset(cfg: Settings, *, extra_args: list[str], tool_filter: list[str]) -> McpToolset:
+# --------------------------------------------------------------------------- #
+# Connection-params builders -- pure, so the mode wiring is unit-testable
+# --------------------------------------------------------------------------- #
+
+
+def oss_params(cfg: Settings, *, extra_args: list[str]) -> StdioConnectionParams:
+    return StdioConnectionParams(
+        server_params=StdioServerParameters(
+            command=cfg.mcp_grafana_bin,
+            args=["-t", "stdio", *extra_args],
+            env=_env(cfg),
+        ),
+        timeout=30.0,
+    )
+
+
+def hosted_params(cfg: Settings) -> StreamableHTTPConnectionParams:
+    if not cfg.grafana_cloud_mcp_token:
+        raise HostedMcpNotAuthorized(
+            "TURNAROUND_MCP_MODE=hosted but no Cloud MCP token. Run "
+            "`uv run python -m agent.mcp_login` to authorize in a browser, or "
+            "set GRAFANA_CLOUD_MCP_TOKEN. Hosted mode has no service-account "
+            "path; use the default oss mode for unattended runs."
+        )
+    return StreamableHTTPConnectionParams(
+        url=HOSTED_MCP_URL,
+        headers={
+            "X-Grafana-URL": cfg.grafana_url,
+            "Authorization": f"Bearer {cfg.grafana_cloud_mcp_token}",
+        },
+        timeout=30.0,
+    )
+
+
+def _toolset(cfg: Settings, *, tool_filter: list[str], oss_extra_args: list[str]) -> McpToolset:
     # No tool_name_prefix: the canonical mcp-grafana names are what the timeline
     # marks as Grafana calls and what the approval gate matches writes on.
-    return McpToolset(
-        connection_params=StdioConnectionParams(
-            server_params=StdioServerParameters(
-                command=cfg.mcp_grafana_bin,
-                args=["-t", "stdio", *extra_args],
-                env=_env(cfg),
-            ),
-            timeout=30.0,
-        ),
-        tool_filter=tool_filter,
-    )
+    params = hosted_params(cfg) if cfg.hosted_mcp else oss_params(cfg, extra_args=oss_extra_args)
+    return McpToolset(connection_params=params, tool_filter=tool_filter)
 
 
 def analyst_toolset(cfg: Settings, tool_filter: list[str]) -> McpToolset:
-    """A read-only mcp-grafana, narrowed to ``tool_filter``."""
-    return _toolset(cfg, extra_args=["--disable-write"], tool_filter=tool_filter)
+    """A read-only Grafana MCP toolset, narrowed to ``tool_filter``.
+
+    oss: an ``--disable-write`` subprocess (read-only by construction).
+    hosted: the same ``tool_filter`` against mcp.grafana.com, read-only by
+    filter -- there is no write-disabling server in this mode.
+    """
+    return _toolset(cfg, tool_filter=tool_filter, oss_extra_args=["--disable-write"])
 
 
 def remediator_toolset(cfg: Settings) -> McpToolset:
-    """A write-capable mcp-grafana limited to annotations and incidents."""
-    return _toolset(
-        cfg,
-        extra_args=["--enabled-tools", "annotations,incident"],
-        tool_filter=REMEDIATOR_WRITE_TOOLS,
-    )
+    """A write-capable Grafana MCP toolset limited to annotations and incidents.
+    Every call still passes ``ApprovalGate.before_tool`` first, in both modes."""
+    return _toolset(cfg, tool_filter=REMEDIATOR_WRITE_TOOLS,
+                    oss_extra_args=["--enabled-tools", "annotations,incident"])
