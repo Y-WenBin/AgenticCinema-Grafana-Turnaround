@@ -644,13 +644,17 @@ studio's stack, so it is not Kitsu+OpenCue-only.
   is the honest coverage list (native / parser / mapping / alias per tool);
   `CsvScheduleSource` ingests a `shot,status,pool,hours` export from any tracker
   with no Python client.
-- **`bridge/editorial.py`** (new) — CMX3600 EDL parser (pure stdlib; every NLE
-  exports EDL) mapping clips to shot ids via the active scheme, tolerant of
-  dissolve/transition columns; optional `iter_otio_cut` behind
-  `pip install 'turnaround[editorial]'` for Avid / Premiere / Resolve / FCP via
-  OpenTimelineIO.
-- **`tests/test_conventions.py`** (new, 40 tests). No vendor SDK is imported by
-  the bridge; an adapter pulls its own in its own module. **Suite 228.**
+- **`bridge/editorial.py`** (new) — CMX3600 EDL parser (pure stdlib) mapping
+  clips to shot ids via the active scheme. Verified against the dialects real
+  tools emit: DaVinci Resolve / Premiere / Avid / Shotcut clip-name comments,
+  drop-frame timecode, dissolve/transition columns, Unix + Windows paths in the
+  comment, and an online/conform EDL that carries the shot only in the reel
+  column. `iter_otio_cut` reads `.otio` (Resolve 18+, Blender VSE, Kdenlive)
+  with `opentimelineio`; FCPXML / AAF need the matching `otio-*-adapter`.
+- **`tests/test_conventions.py`** (37) + **`tests/test_editorial.py`** (new, 20
+  — one fixture per tool, plus a programmatic OTIO round-trip). `opentimelineio`
+  is in the dev group so the OTIO path runs in CI; it stays an optional runtime
+  extra. No vendor SDK is imported by the bridge. **Suite 241.**
 
 ### Not started
 

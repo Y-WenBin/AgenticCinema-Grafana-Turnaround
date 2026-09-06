@@ -32,7 +32,7 @@ dependencies = [
 editorial = ["opentimelineio>=0.17"]
 
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.8"]
+dev = ["pytest>=8.0", "ruff>=0.8", "opentimelineio>=0.17"]  # otio path is exercised in tests
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

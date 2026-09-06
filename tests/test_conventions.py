@@ -15,7 +15,6 @@ import re
 
 import pytest
 
-from bridge.editorial import parse_edl, shot_ids_from_edl
 from bridge.ontology import (
     SHOT_ID_SCHEMES,
     Department,
@@ -150,48 +149,8 @@ def test_job_name_parse_respects_a_non_default_scheme():
     assert parse_job_name("0420_0100 comp v2", convention="deadline") is None
 
 
-# --------------------------------------------------------------------------
-# editorial (EDL — every NLE exports one)
-# --------------------------------------------------------------------------
-
-
-_EDL = """TITLE: NIGHTFALL_R02_v14
-FCM: NON-DROP FRAME
-
-001  BL       V     C        00:00:00:00 00:00:02:00 01:00:00:00 01:00:02:00
-* FROM CLIP NAME: BARS_AND_TONE
-
-002  SEQ0420  V     C        01:00:00:00 01:00:04:12 01:00:02:00 01:00:06:12
-* FROM CLIP NAME: SEQ0420_SH0100_comp_v006.mov
-
-003  SEQ0420  V     D    012 01:00:04:12 01:00:07:00 01:00:06:12 01:00:09:00
-* FROM CLIP NAME: SEQ0420_SH0110_comp_v002
-"""
-
-
-def test_edl_parse_extracts_the_cut_and_skips_non_shots():
-    items = parse_edl(_EDL)
-    assert [i.shot_id for i in items] == ["SEQ0420_SH0100", "SEQ0420_SH0110"]
-    first = items[0]
-    assert first.revision == 6
-    assert first.duration_seconds == pytest.approx(4.5)
-    assert first.record_in_seconds == pytest.approx(3602.0)
-
-
-def test_shot_ids_from_edl_is_ordered_and_deduplicated():
-    doubled = _EDL + (
-        "\n004  SEQ0420  V     C        01:00:00:00 01:00:02:00 01:00:09:00 01:00:11:00\n"
-        "* FROM CLIP NAME: SEQ0420_SH0100_comp_v007\n"
-    )
-    assert shot_ids_from_edl(doubled) == ["SEQ0420_SH0100", "SEQ0420_SH0110"]
-
-
-def test_edl_maps_clips_with_a_non_default_scheme():
-    edl = (
-        "001  R1  V  C  01:00:00:00 01:00:02:00 01:00:00:00 01:00:02:00\n"
-        "* FROM CLIP NAME: 0420_0100_comp_v1\n"
-    )
-    assert shot_ids_from_edl(edl, scheme=SHOT_ID_SCHEMES["numeric"]) == ["0420_0100"]
+# Editorial ingest (EDL + OpenTimelineIO, per-tool dialects) has its own file:
+# tests/test_editorial.py.
 
 
 # --------------------------------------------------------------------------
