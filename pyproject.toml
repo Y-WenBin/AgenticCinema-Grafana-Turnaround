@@ -15,6 +15,7 @@ dependencies = [
   # OpenTelemetry: one OTLP gateway carries traces, logs and metrics
   "opentelemetry-sdk>=1.29.0",
   "opentelemetry-exporter-otlp-proto-http>=1.29.0",
+  "opentelemetry-semantic-conventions>=0.50b0",  # gen_ai.* attribute + metric names
   # Sources
   "gazu>=0.10.0",          # Kitsu client: task events + time-spents
   "prometheus-client>=0.21.0",
@@ -36,7 +37,7 @@ pythonpath = ["."]
 line-length = 100
 
 [tool.hatch.build.targets.wheel]
-packages = ["bridge", "agent", "seed"]
+packages = ["bridge", "agent", "seed", "observability"]
 
 [build-system]
 requires = ["hatchling"]

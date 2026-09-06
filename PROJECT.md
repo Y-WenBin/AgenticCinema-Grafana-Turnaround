@@ -530,10 +530,66 @@ is non-loopback; it never raises into the agent.
   (PROJECT.md §6 said they were on a separate endpoint — no longer true), so the
   FarmAnalyst can query traces directly. Not yet exercised in a live run.
 
+### EvalOps tier — GenAI self-instrumentation + judge + surface (2026-09-06)
+
+Answers the "Agentic EvalOps & Telemetry Gateway" proposal: make the *agent*
+legible in Grafana the way the *shot* already is, and score its answers.
+
+- **`observability/`** — a standalone package (no `agent/`/`bridge/` import; the
+  PII guard is injected). `instrument()` returns an ADK `BasePlugin` +
+  `GenAiTelemetry`, wired once on the `Runner` in `agent/run.py`
+  (`--no-observability` to skip). Emits, to the same OTLP gateway as the seeder
+  under `service.name=turnaround-agent`: an `invoke_agent` root span (opened in
+  `run.py`) with `chat` and `execute_tool` children per the OTel GenAI
+  conventions (`gen_ai.provider.name`, `request.model`, `usage.*_tokens`,
+  `response.id`, `finish_reasons`, `tool.name`/`tool.call_id`, plus a
+  `turnaround.query` pivot attribute); `gen_ai.client.token.usage` and
+  `gen_ai.client.operation.duration` histograms; opt-in prompt capture behind
+  `TURNAROUND_CAPTURE_CONTENT` (guarded by `assert_no_pii`).
+  *Two ADK-shape bugs found and fixed in live runs: don't `context.attach` across
+  callback boundaries (root span belongs in `run.py`); pair `chat` spans on a
+  stack, not `id(callback_context)` — ADK passes different objects to
+  before/after. `tests/test_observability.py`.*
+- **`agent/evaluation.py`** — after `synthesis`, a `DeterministicJudge`
+  (ground-truth anchors + the `privacy_floor_respected` invariant — a sub-floor
+  pool named anywhere = fail) and an `LlmJudge` (second Gemini, no tools:
+  relevance / hallucination / task_completion). Each check is one
+  `gen_ai.evaluation.result` log event (JSON body, `| json`-queryable in Loki),
+  correlated by `gen_ai.response.id`. `agent/run.py --no-eval` skips.
+  `tests/test_evaluation.py`. *The LLM judge does flag real run-to-run variation
+  — hallucination 0.3–1.0 depending on how much of a figure's derivation the
+  answer shows — which is the point, not a bug.*
+- **`grafana/evalops/build.py`** → `dashboards/turnaround-evalops.json` (11
+  panels: Loki eval stats + score-by-dimension drift + an events table linking
+  `response_id` → the run's Tempo trace; Prom token/latency/tool-fan-out).
+  Two Loki-backed alert rules in a new `turnaround-evalops` group:
+  `eval-grounding-drift` (mean grounding < 0.8) and `eval-privacy-breach`
+  (`privacy_floor_respected=fail` > 0, severity critical), each with a `lever`.
+  `provision.py` pushes both unchanged. `tests/test_evalops_grafana.py`.
+  Verified live on `your-stack`: full trace, metrics, 6 eval events/run,
+  alerts evaluate `inactive health=ok`.
+
+### Grafana MCP: two modes (2026-09-06)
+
+`TURNAROUND_MCP_MODE` (`agent/config.py`), default **`oss`** — unchanged: local
+`grafana/mcp-grafana` stdio subprocess, SA token, read-only *by construction*
+(`--disable-write`). This is the deployed/demo path.
+
+**`hosted`** (opt-in) targets `https://mcp.grafana.com/mcp` over Streamable HTTP
+with the instance in `X-Grafana-URL` and a bearer from the OAuth 2.1 flow
+(`agent/mcp_login.py` — PKCE + dynamic client registration, browser consent,
+localhost callback, token to `.secrets/grafana-cloud-mcp-token`). The hosted
+endpoint has no service-account path, so this mode cannot run unattended and is
+not the deploy target; it exists to exercise the interactive authorization the
+proposal assumes. In hosted mode the read/write split is enforced by
+`tool_filter` + the approval gate, not a server flag. `agent/mcp_grafana.py`
+raises `HostedMcpNotAuthorized` with a pointer to `mcp_login` if no token is
+present. `tests/test_mcp_grafana.py`.
+
 ### Not started
 
-Supervisor console · AI Observability instrumentation · Cloud Run deploy ·
-demo video.
+Supervisor console (folds into the Scenes App Plugin, Horizon B) · Cloud Run
+deploy · demo video.
 
 ### Deferred by decision
 
