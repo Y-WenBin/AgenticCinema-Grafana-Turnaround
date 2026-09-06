@@ -1,0 +1,18 @@
+# What `gcloud run deploy --source .` / `gcloud builds submit` must NOT upload.
+# Secrets first — these never leave the machine.
+.env
+.env.*
+!.env.example
+.secrets/
+.secrets/**
+
+.git/
+.github/
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+**/__pycache__/
+*.pyc
+web/
+agent/_writeback.jsonl

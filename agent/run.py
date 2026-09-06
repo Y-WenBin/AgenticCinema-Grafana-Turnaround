@@ -20,6 +20,10 @@ Unless ``--no-eval`` is passed, the answer is then scored by the judge tier
 (``agent/evaluation.py``): a deterministic ground-truth + privacy check, and an
 LLM judge (a second Gemini) for grounding / relevance / task completion. Each
 check is emitted as a ``gen_ai.evaluation.result`` event correlated to the run.
+
+A circuit breaker (``TURNAROUND_MAX_LLM_CALLS``, default 40) caps Gemini calls
+for the whole run so a stuck tool-retry loop cannot run up the token bill; when
+it trips the run exits non-zero with a note instead of a traceback.
 """
 
 from __future__ import annotations
@@ -28,12 +32,14 @@ import argparse
 import asyncio
 import sys
 
+from google.adk.agents.invocation_context import LlmCallsLimitExceededError
+from google.adk.agents.run_config import RunConfig
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from agent.approval import AutoApprover, CliApprover
-from agent.config import ANALYST_MODEL, bootstrap_vertex
+from agent.config import ANALYST_MODEL, MAX_LLM_CALLS, bootstrap_vertex
 from agent.mcp_grafana import HostedMcpNotAuthorized
 from agent.producer import build_system
 
@@ -91,18 +97,25 @@ async def ask(question: str, *, approve: bool, interactive: bool,
     runner = Runner(app_name=APP, agent=system.producer, session_service=sessions,
                     plugins=plugins)
 
+    # Circuit breaker: a flash analyst that gets stuck re-calling a tool would
+    # otherwise burn tokens until ADK's default ceiling of 500 model calls. The
+    # deterministic pipeline needs ~30 in the worst honest case; cap well below.
+    run_config = RunConfig(max_llm_calls=MAX_LLM_CALLS)
+
     async def _drive() -> str:
         answer = ""
         async for event in runner.run_async(
             user_id="supervisor",
             session_id="cli",
             new_message=types.Content(role="user", parts=[types.Part(text=question)]),
+            run_config=run_config,
         ):
             if event.is_final_response() and event.content and event.content.parts:
                 answer = "".join(p.text or "" for p in event.content.parts)
         return answer
 
     final = ""
+    hit_limit = False
     try:
         if obs is not None:
             # One invoke_agent root span around the whole run; the plugin's chat
@@ -111,9 +124,18 @@ async def ask(question: str, *, approve: bool, interactive: bool,
                 final = await _drive()
         else:
             final = await _drive()
+    except LlmCallsLimitExceededError as exc:
+        hit_limit = True
+        print(f"\ncircuit breaker tripped: {exc}\n"
+              f"(raise TURNAROUND_MAX_LLM_CALLS above {MAX_LLM_CALLS} if this is a "
+              f"legitimately long run; the default guards against a tool-retry loop)",
+              file=sys.stderr)
     finally:
         if obs is not None:
             obs.flush()
+
+    if hit_limit and not final.strip():
+        return 3
 
     print("\n" + "=" * 96)
     print(final.strip() or "(no answer)")

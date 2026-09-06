@@ -58,6 +58,23 @@ ANALYST_MODEL = os.environ.get("TURNAROUND_GEMINI_MODEL", "gemini-2.5-flash")
 PRODUCER_MODEL = os.environ.get("TURNAROUND_GEMINI_MODEL_PRO", ANALYST_MODEL)
 
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, "").strip())
+        return value if value > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+#: Circuit breaker for a run: the ceiling on Gemini calls across the whole
+#: pipeline, passed to ADK's ``RunConfig(max_llm_calls=...)``. The five-step
+#: deterministic pipeline needs ~30 in the worst honest case (each analyst may
+#: retry a query once); ADK's own default is 500, high enough for a stuck
+#: tool-retry loop to burn real money before anything stops it. Override with
+#: ``TURNAROUND_MAX_LLM_CALLS`` for a legitimately longer run.
+MAX_LLM_CALLS = _int_env("TURNAROUND_MAX_LLM_CALLS", 40)
+
+
 # --------------------------------------------------------------------------- #
 # Grafana + Vertex settings
 # --------------------------------------------------------------------------- #
