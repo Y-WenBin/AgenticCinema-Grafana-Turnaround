@@ -73,6 +73,15 @@ _FLOOR_QUERY = _latest(
     f"(max by (pool) ({_M.ARTIST_HOURS})) and on(pool) ({_M.POOL_HEADCOUNT} >= 3)"
 )
 
+# Artist-days/week of comp overtime: per-pool hours above a 40h week, times the
+# roster, over an 8h day. `... >= 3` both filters to pools that meet the floor
+# and supplies the headcount to multiply by, so di-pool-1 (2 people) never
+# contributes. One PromQL the model was previously failing to compose inline.
+_OT_HOURS = f'clamp_min((max by (pool) ({_M.ARTIST_HOURS}{{department="comp"}})) - 40, 0)'
+_ROSTER_GE_FLOOR = f'on(pool) ({_M.POOL_HEADCOUNT}{{department="comp"}} >= 3)'
+_ARTIST_DAYS_PER_POOL = _latest(f"{_OT_HOURS} * {_ROSTER_GE_FLOOR} / 8")
+_ARTIST_DAYS_TOTAL = _latest(f"sum({_OT_HOURS} * {_ROSTER_GE_FLOOR}) / 8")
+
 #: title -> PromQL. Every recipe is an instant query at endTime='now'.
 QUERY_RECIPES: dict[str, str] = {
     _JOIN_TITLE: THE_JOIN,
@@ -80,6 +89,8 @@ QUERY_RECIPES: dict[str, str] = {
     "Frame-failure rate by sequence": _FRAME_FAIL,
     "Weekly hours per rostered artist, by pool -- crew load": _latest(f"max by (pool) ({_M.ARTIST_HOURS})"),
     _FLOOR_TITLE: _FLOOR_QUERY,
+    "Artist-days/week of comp overtime cost, by pool (pools >= floor only) -- use for 'what is it costing in artist-days'": _ARTIST_DAYS_PER_POOL,
+    "Artist-days/week of comp overtime cost, whole comp dept (one number)": _ARTIST_DAYS_TOTAL,
     "Delivery burndown (shots signed off; 200 is the whole show)": _latest(f"sum({_M.SHOTS_APPROVED})"),
     "Department passes per sequence, cumulative (rework included)": _latest(f"sum by (sequence) ({_M.TASK_ITERATIONS})"),
     "Comp passes per sequence (how far SEQ0420's rework has actually got)": _latest(f'sum by (sequence) ({_M.TASK_ITERATIONS}{{department="comp"}})'),
@@ -125,7 +136,8 @@ _LOGS_NOTE = (
 
 _TRACES_NOTE = (
     "TRACES (Tempo): each shot is one trace; department stages are spans; a retake is a span with"
-    ' error status. Query by { .production.shot_id = "SEQ0420_SH0100" }.'
+    ' error status. Query with TraceQL { span.production.shot_id = "SEQ0420_SH0100" }, or'
+    ' { span.production.department = "comp" && status = error } for rework across the show.'
 )
 
 

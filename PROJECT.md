@@ -586,10 +586,50 @@ proposal assumes. In hosted mode the read/write split is enforced by
 raises `HostedMcpNotAuthorized` with a pointer to `mcp_login` if no token is
 present. `tests/test_mcp_grafana.py`.
 
+### Hardening + reproducibility + deploy scaffolding (2026-09-06)
+
+- **Circuit breaker.** `TURNAROUND_MAX_LLM_CALLS` (`agent/config.py`, default 40)
+  → `RunConfig(max_llm_calls=...)` on every `runner.run_async` in `agent/run.py`
+  and `agent/serve.py`. `LlmCallsLimitExceededError` is caught: the CLI exits 3
+  with a note, the HTTP path returns `circuit_breaker_tripped: true`. ADK's own
+  default is 500 — high enough for a stuck tool-retry loop to cost real money.
+- **Synthesis grounding tightened** (`agent/producer.py`): every figure in the
+  final answer must appear in a specialist block; no newly-derived numbers; a
+  figure the run didn't measure is reported as "not measured this run", not
+  estimated. This exposed that the ScheduleAnalyst was failing to compose the
+  artist-day cost PromQL inline → added ready-made
+  `Artist-days/week of comp overtime cost` recipes (per-pool + total) to
+  `agent/vocabulary.py` and pointed `SCHEDULE_ROLE` at them. Live: total 56.26
+  artist-days/week, was degenerating to 0.
+- **FarmAnalyst now uses Tempo.** `FARM_ROLE` step D runs
+  `tempo_traceql-search { span.production.shot_id="SEQ0420_SH0100" }`; verified
+  live across three demo questions (`tempo_traceql-search` ok in the timeline).
+- **Demo Q2 / Q4 re-verified live** post-changes: both 6/6 eval checks,
+  LLM-judge `hallucination` 1.00 (Q1 pre-fix run had 0.20 because the cost query
+  failed and synthesis honestly reported 0). `--approve` write-back path
+  re-confirmed: `create_annotation` + `kitsu_write_back` through the gate,
+  new `agent/_writeback.jsonl` row.
+- **`agent/serve.py`** — FastAPI wrapper (`POST /ask`, `GET /healthz`) for Cloud
+  Run: same pipeline, `AutoApprover(approve=False)` so the endpoint can't mutate
+  anything, returns `{answer, timeline, evaluation, response_id, ...}`.
+- **`deploy/`** — `Dockerfile` (Python 3.12 + uv + pinned, checksum-verified
+  `mcp-grafana` 1.3.0), `deploy.sh` (APIs, least-privilege runtime SA, Secret
+  Manager, `gcloud run deploy --source`), `README.md`; `.gcloudignore` /
+  `.dockerignore` keep `.env` and `.secrets/` out. `gcloud` is not installed on
+  this box, so running the deploy is the operator's step.
+- **`tests/TESTPLAN.md`** — the reproducibility contract + the hackathon
+  unit-test checklist mapped onto the architecture. **`tests/test_reproducibility.py`**
+  (21 tests): deterministic seed, no non-Google AI SDK on the runtime path,
+  circuit breaker wired + trips cleanly, partner MCP imported and instantiated,
+  mock MCP payload classified, auth-failure handled gracefully, prompts never
+  point at an unfilterable tool, oversized payload capped, startup config
+  validation, submission compliance, deploy context excludes secrets.
+  **Suite 167 → 188.**
+
 ### Not started
 
 Supervisor console (folds into the Scenes App Plugin, Horizon B) · Cloud Run
-deploy · demo video.
+deploy *run* (scaffolding done; needs `gcloud` + a GCP project) · demo video.
 
 ### Deferred by decision
 

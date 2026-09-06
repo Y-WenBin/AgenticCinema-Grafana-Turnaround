@@ -93,7 +93,28 @@ progress: **[PROJECT.md](PROJECT.md)**.
 ```bash
 uv sync --group dev
 uv run pytest
+uv run ruff check .
 ```
+
+Ask the agent a question (needs a filled-in `.env` — see `.env.example`):
+
+```bash
+uv run python -m seed.populate
+uv run python -m agent.run "Why is SEQ0420 slipping, and what is it costing in artist-days?"
+```
+
+Every run self-instruments with the OpenTelemetry GenAI conventions and scores
+its own answer (deterministic + LLM judge); the trace, token/latency histograms
+and `gen_ai.evaluation.result` events land in the same Grafana Cloud stack. A
+per-run Gemini-call ceiling (`TURNAROUND_MAX_LLM_CALLS`, default 40) caps token
+spend. Test plan and reproducibility contract: [`tests/TESTPLAN.md`](tests/TESTPLAN.md).
+
+## Deploy
+
+`agent/serve.py` is a FastAPI wrapper (`POST /ask`, `GET /healthz`) for Cloud
+Run. `deploy/deploy.sh` provisions a least-privilege runtime service account,
+pushes Grafana + OTLP credentials to Secret Manager, and deploys from
+`deploy/Dockerfile`. See [`deploy/README.md`](deploy/README.md).
 
 ## Data provenance
 

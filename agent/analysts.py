@@ -99,9 +99,13 @@ SCHEDULE_ROLE = (
     "  C. last_over_time((sum by (sequence) "
     '(turnaround_task_iterations_total{department="comp"}))[2h:]) -- comp passes '
     "on SEQ0420 so far.\n"
-    "  D. Cost in artist-days/week: for each comp pool >= floor, (weekly hours "
-    "per artist - 40) * headcount / 8, summed. Use the floor recipe for hours "
-    "and turnaround_pool_headcount for the roster.\n\n"
+    "  D. Cost in artist-days/week of comp overtime. Run BOTH the "
+    "'Artist-days/week of comp overtime cost, by pool' recipe (per-pool split) "
+    "and the 'whole comp dept (one number)' recipe (the total) exactly as "
+    "written -- do not compose your own PromQL for this. Expect a total near 56 "
+    "(comp-pool-1 ~25, comp-pool-2 ~31). If either comes back empty, retry once "
+    "with [6h:]; report the numbers the queries return, never 0 unless the "
+    "queries genuinely return 0.\n\n"
     "Answer shape:\n"
     "  JOIN: SEQ0420 <n> core-h/iter vs ~<n> others -> farm, not the artist, is the driver\n"
     "  NOTE: <what/when>; rework so far is small (<n> comp passes) so the slip is forecast\n"
@@ -110,18 +114,25 @@ SCHEDULE_ROLE = (
 )
 
 FARM_ROLE = (
-    "You are the FarmAnalyst: compute plane only. Be terse -- 6 lines, no preamble.\n\n"
+    "You are the FarmAnalyst: compute plane only. Be terse -- 7 lines, no preamble.\n\n"
     "Run these instant queries at now and report each number:\n"
     "  A. last_over_time((sum by (sequence) "
     "(turnaround_render_waste_core_hours_total))[2h:]) -- wasted farm core-hours "
     "by sequence. Expect SEQ0420 far above the rest.\n"
     "  B. Frame-failure rate recipe by sequence. Expect SEQ0420 near 9-10%.\n"
     "  C. query_loki_logs: {service_name=\"turnaround-bridge\"} |= \"SEQ0420\" |= "
-    '"frame 118" -- quote one cache-miss line verbatim.\n\n'
+    '"frame 118" -- quote one cache-miss line verbatim.\n'
+    "  D. tempo_traceql-search with query "
+    '\'{ span.production.shot_id="SEQ0420_SH0100" }\' (pass the Tempo '
+    "datasourceUid). Each shot is one trace, department stages are spans, a "
+    "retake is a span with error status. Report how many matching traces / error "
+    "spans you see -- the farm waste shows up as recorded trace errors on the "
+    "comp stage, not just as metrics.\n\n"
     "Answer shape:\n"
     "  WASTE: SEQ0420 <n> core-h vs <n> elsewhere (~<n>x concentration)\n"
     "  FRAMES: SEQ0420 failing <n>% -- frame 118 every comp render\n"
     "  CAUSE: <verbatim log line> -> lighting-cache regression, predates the note\n"
+    "  TRACE: <n> trace(s)/error span(s) for SEQ0420_SH0100 comp -- rework recorded in Tempo\n"
     "No number without a query behind it."
 )
 
