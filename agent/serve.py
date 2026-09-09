@@ -42,6 +42,13 @@ class AskRequest(BaseModel):
     evaluate: bool = True
 
 
+# Two paths, one handler. Google Frontend swallows the exact path `/healthz` on
+# *.run.app and answers it itself with an HTML 404 -- the request never reaches
+# the container, so the documented smoke test silently "fails" against a service
+# that is perfectly healthy. `/health` is the one to curl on a hosted URL;
+# `/healthz` stays for Cloud Run's own probes and for any deployment not behind
+# GFE (a custom domain, GKE, a local run).
+@app.get("/health")
 @app.get("/healthz")
 def healthz() -> dict:
     cfg = load_settings()

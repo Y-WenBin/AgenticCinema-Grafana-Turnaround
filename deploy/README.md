@@ -57,11 +57,17 @@ started `--disable-write`, `--max-instances 2` caps the blast radius, and
 ```bash
 URL=$(gcloud run services describe turnaround-agent --region us-central1 --format 'value(status.url)')
 
-curl -s "$URL/healthz" | jq
+curl -s "$URL/health" | jq
 curl -s -H 'content-type: application/json' \
   -d '{"question":"why is SEQ0420 slipping and what is it costing?"}' \
   "$URL/ask" | jq
 ```
+
+**Curl `/health`, not `/healthz`.** Google Frontend reserves the exact path
+`/healthz` on a `*.run.app` hostname: it answers with its own HTML 404 and the
+request never reaches the container, so a perfectly healthy service looks dead.
+`/health` is the same handler under a path GFE lets through; `/healthz` is kept
+for Cloud Run's own probes and for deployments not behind GFE.
 
 To lock it down again: `gcloud run services remove-iam-policy-binding
 turnaround-agent --region us-central1 --member allUsers --role roles/run.invoker`.

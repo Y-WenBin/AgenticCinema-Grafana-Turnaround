@@ -96,8 +96,12 @@ if ! gcloud artifacts repositories describe "$AR_REPO" --location "$REGION" >/de
 fi
 TAG="$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d%H%M%S)"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/turnaround:${TAG}"
-echo "==> building $IMAGE from ./Dockerfile"
-gcloud builds submit --tag "$IMAGE" .
+if [[ -n "${SKIP_BUILD:-}" ]] && gcloud artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
+  echo "==> SKIP_BUILD set and $IMAGE already exists — reusing it"
+else
+  echo "==> building $IMAGE from ./Dockerfile"
+  gcloud builds submit --tag "$IMAGE" .
+fi
 
 # --- the agent service ---------------------------------------------------
 # Public on purpose: the hosted URL has to be openable by a judge. Writes are
@@ -128,12 +132,14 @@ gcloud run jobs deploy "$SEED_JOB" \
   --service-account "$SA_EMAIL" \
   --set-env-vars "$ENV_VARS" \
   --set-secrets "$SECRETS" \
-  --command python --args "-m,seed.refresh,--once" \
+  --command=python --args="-m,seed.refresh,--once" \
   --cpu 1 --memory 1Gi --max-retries 1 --task-timeout 15m
 
 echo "==> granting run.invoker on $SEED_JOB to $SA_EMAIL"
+# NB: the `run jobs` variant of add-iam-policy-binding does not accept
+# --condition, unlike the `projects` one used above. Passing it fails the deploy.
 gcloud run jobs add-iam-policy-binding "$SEED_JOB" --region "$REGION" \
-  --member "serviceAccount:${SA_EMAIL}" --role roles/run.invoker --condition=None >/dev/null
+  --member "serviceAccount:${SA_EMAIL}" --role roles/run.invoker >/dev/null
 
 SCHED="${SEED_JOB}-every-${SEED_EVERY_MIN}m"
 RUN_URI="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${SEED_JOB}:run"
@@ -149,9 +155,11 @@ gcloud scheduler jobs "$VERB" http "$SCHED" \
   --schedule "*/${SEED_EVERY_MIN} * * * *" \
   --uri "$RUN_URI" \
   --http-method POST \
-  --oauth-service-account-email "$SA_EMAIL" \
-  ${SEED_PAUSED:+--description "paused by deploy; resume with gcloud scheduler jobs resume"} >/dev/null
-[[ -n "${SEED_PAUSED:-}" ]] && gcloud scheduler jobs pause "$SCHED" --location "$REGION" >/dev/null
+  --oauth-service-account-email "$SA_EMAIL" >/dev/null
+if [[ -n "${SEED_PAUSED:-}" ]]; then
+  gcloud scheduler jobs pause "$SCHED" --location "$REGION" >/dev/null
+  echo "   (schedule created paused — resume with: gcloud scheduler jobs resume $SCHED --location $REGION)"
+fi
 
 echo "==> priming the data once so the demo is live immediately"
 gcloud run jobs execute "$SEED_JOB" --region "$REGION" --wait || \

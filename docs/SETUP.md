@@ -387,10 +387,14 @@ the compressed window never ages out from under the hosted demo. Then:
 
 ```bash
 URL=$(gcloud run services describe turnaround-agent --region us-central1 --format 'value(status.url)')
-curl -s "$URL/healthz" | python3 -m json.tool
+curl -s "$URL/health" | python3 -m json.tool
 curl -s -H 'content-type: application/json' \
   -d '{"question":"why is SEQ0420 slipping and what is it costing?"}' "$URL/ask" | python3 -m json.tool
 ```
+
+Use `/health`, not `/healthz`: Google Frontend intercepts the exact path
+`/healthz` on `*.run.app` and returns its own HTML 404 without ever reaching the
+container. Same handler, different path.
 
 The service is public so a reviewer can open it. It cannot write anything:
 `serve.py` runs `AutoApprover(approve=False)`, `--max-instances` caps the blast

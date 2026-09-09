@@ -304,6 +304,23 @@ def test_ask_validates_the_question_before_spending_a_token(question):
     assert response.status_code == 422
 
 
+def test_health_is_reachable_under_both_paths(monkeypatch):
+    """`/healthz` is unreachable on *.run.app -- Google Frontend answers it itself.
+
+    GFE intercepts the exact lowercase path `/healthz` on a run.app hostname and
+    returns its own HTML 404; the request never reaches the container. A healthy
+    service therefore looks dead to the documented smoke test. `/health` is the
+    alias that actually gets through, and both must return the same body.
+    """
+    monkeypatch.setattr(serve_mod, "load_settings", lambda: _cfg(max_llm_calls=11))
+    client = TestClient(serve_mod.app)
+    a = client.get("/health")
+    b = client.get("/healthz")
+    assert a.status_code == 200 and b.status_code == 200
+    assert a.json() == b.json()
+    assert a.json()["status"] == "ok"
+
+
 def test_healthz_is_a_pure_read_and_publishes_the_resolved_ceiling(monkeypatch):
     monkeypatch.setattr(serve_mod, "load_settings", lambda: _cfg(max_llm_calls=11))
     body = TestClient(serve_mod.app).get("/healthz").json()
