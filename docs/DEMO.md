@@ -192,7 +192,7 @@ except the terminal ones can be re-taken from a single seeded session.
 
 | # | Command | What to highlight |
 |---|---|---|
-| T1 | `uv run pytest -q` | `361 passed`. Two seconds under the close, or cut entirely if tight |
+| T1 | `uv run pytest -q` | `364 passed`. Two seconds under the close, or cut entirely if tight |
 | T2 | Question 1 (below) | Evidence block, then the `*`-marked tool timeline |
 | T3 | Question 2 | The pools named — and the one that isn't |
 | T4 | Question 3 with `--interactive` | The approval prompt, the evidence chain, the `y` |

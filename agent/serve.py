@@ -8,6 +8,7 @@ behind one endpoint so a demo (or a CI probe) can hit a URL:
           "response_id": "turnaround-...", "circuit_breaker_tripped": false}
 
     GET  /healthz   -> {"status": "ok", "vertex_ready": true, "grafana_ready": true}
+    GET  /          -> what this service is and how to call it (HTML or JSON)
 
 Writes are always auto-denied here (``AutoApprover(approve=False)``) -- a public
 endpoint must never be able to mutate Kitsu or Grafana. Run the CLI with
@@ -25,7 +26,8 @@ from __future__ import annotations
 
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from agent import engine
@@ -40,6 +42,64 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=2000)
     observability: bool = True
     evaluate: bool = True
+
+
+SERVICE = {
+    "service": "turnaround",
+    "what": (
+        "Joins a VFX show's creative schedule to its render farm in Grafana, "
+        "forecasts delivery slip and crew overload together, and proposes "
+        "evidence-backed corrections a supervisor approves."
+    ),
+    "read_only": True,
+    "endpoints": {
+        "GET /health": "liveness and resolved configuration",
+        "POST /ask": 'ask a question: {"question": "why is SEQ0420 slipping?"}',
+        "GET /docs": "OpenAPI / Swagger UI",
+    },
+    "example": (
+        "curl -s -H 'content-type: application/json' "
+        "-d '{\"question\": \"why is SEQ0420 slipping and what is it costing?\"}' "
+        "$URL/ask"
+    ),
+    "source": "https://github.com/Y-WenBin/AgenticCinema-Grafana-Turnaround",
+}
+
+
+# A public demo URL's first visitor is a person with a browser, and FastAPI
+# declares no route at `/` -- so the front door answered `{"detail":"Not Found"}`,
+# which reads as a broken deployment when the service is perfectly healthy. One
+# handler, two audiences: a browser (Accept: text/html) gets a readable card, and
+# every other client -- curl, a probe, a judge's script -- gets the same content
+# as JSON. Keep them fed from one `SERVICE` dict so they can never drift.
+@app.get("/", response_model=None)
+def index(request: Request) -> dict | HTMLResponse:
+    if "text/html" not in request.headers.get("accept", ""):
+        return SERVICE
+    rows = "\n".join(
+        f"<tr><td><code>{path}</code></td><td>{what}</td></tr>"
+        for path, what in SERVICE["endpoints"].items()
+    )
+    # uvicorn trusts `X-Forwarded-Proto` only from 127.0.0.1, and Cloud Run's
+    # frontend is not that -- so `request.base_url` says `http` on an https
+    # service and the paste-able example would be wrong. Read the header here
+    # rather than trusting every `X-Forwarded-*` globally for one string.
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    base = str(request.base_url).rstrip("/")
+    base = base.replace("http://", f"{scheme}://", 1) if base.startswith("http://") else base
+    return HTMLResponse(
+        "<!doctype html><meta charset=utf-8>"
+        "<title>Turnaround</title>"
+        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:46rem;"
+        "margin:4rem auto;padding:0 1.5rem}td{padding:.2rem .8rem .2rem 0;"
+        "vertical-align:top}pre{background:#f4f4f5;padding:1rem;overflow-x:auto}"
+        "</style>"
+        "<h1>Turnaround</h1>"
+        f"<p>{SERVICE['what']}</p>"
+        f"<table>{rows}</table>"
+        f"<pre>{SERVICE['example'].replace('$URL', base)}</pre>"
+        f"<p>Read-only by construction. <a href=\"{SERVICE['source']}\">Source</a>.</p>"
+    )
 
 
 # Two paths, one handler. Google Frontend swallows the exact path `/healthz` on

@@ -304,6 +304,48 @@ def test_ask_validates_the_question_before_spending_a_token(question):
     assert response.status_code == 422
 
 
+def test_root_is_not_a_404():
+    """The front door of a public demo must not answer `{"detail":"Not Found"}`.
+
+    FastAPI declares no route at `/` unless one is written, so the first person
+    who pastes the hosted URL into a browser sees what looks like a broken
+    deployment against a service that is perfectly healthy.
+    """
+    response = TestClient(serve_mod.app).get("/")
+    assert response.status_code == 200
+
+
+def test_root_serves_html_to_a_browser_and_json_to_everything_else():
+    """One handler, two audiences, one source of truth."""
+    client = TestClient(serve_mod.app)
+
+    page = client.get("/", headers={"accept": "text/html,application/xhtml+xml"})
+    assert page.headers["content-type"].startswith("text/html")
+    body = page.text
+    for path in serve_mod.SERVICE["endpoints"]:
+        assert path in body, f"{path} missing from the landing page"
+
+    machine = client.get("/", headers={"accept": "application/json"})
+    assert machine.json() == serve_mod.SERVICE
+    assert machine.json()["read_only"] is True
+
+
+def test_root_example_url_survives_a_terminating_proxy():
+    """Cloud Run terminates TLS upstream, so the request arrives as plain http.
+
+    uvicorn trusts `X-Forwarded-Proto` only from 127.0.0.1 and Cloud Run's
+    frontend is not that, so an unguarded `request.base_url` would hand the
+    visitor an `http://` command for an https-only service.
+    """
+    client = TestClient(serve_mod.app)
+    body = client.get(
+        "/",
+        headers={"accept": "text/html", "x-forwarded-proto": "https"},
+    ).text
+    assert "https://testserver/ask" in body
+    assert "http://testserver" not in body
+
+
 def test_health_is_reachable_under_both_paths(monkeypatch):
     """`/healthz` is unreachable on *.run.app -- Google Frontend answers it itself.
 

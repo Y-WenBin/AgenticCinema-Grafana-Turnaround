@@ -21,6 +21,7 @@ here are true as of their date and are not retro-edited.
 | 2026-09-09 | [Code review and hardening pass](#2026-09-09--code-review-and-hardening-pass) |
 | 2026-09-10 | [First real deploy: the buildpack trap](#2026-09-10--first-real-deploy-the-buildpack-trap) |
 | 2026-09-10 | [Deployed — and three faults only a real run could find](#2026-09-10--deployed--and-three-faults-only-a-real-run-could-find) |
+| 2026-09-10 | [The front door was a 404, and I had already seen it](#2026-09-10--the-front-door-was-a-404-and-i-had-already-seen-it) |
 
 ---
 
@@ -332,3 +333,45 @@ every quarter hour — first execution `Completed`, `succeededCount 1`. The publ
 endpoint answered the SEQ0420 question with the join intact (44.10 core-h against
 ~0.8 elsewhere, `frame 118` named, 12.9 artist-days/week) and all eight documented
 response keys present.
+
+
+## 2026-09-10 — the front door was a 404, and I had already seen it
+
+Someone opened the hosted URL in a browser and got `{"detail":"Not Found"}`.
+
+The service was fine. `/health`, `/ask` and `/docs` all answered correctly; the
+root simply had no route, because `agent/serve.py` declared three paths and `/`
+was not one of them. Locally it 404s identically, so nothing regressed in the
+deploy — the endpoint had been that way since it was written.
+
+The uncomfortable part is in the entry directly above this one. Two hours
+earlier I used that exact line —
+
+    /          -> {"detail":"Not Found"}  (22b, FastAPI: the request arrives)
+
+— as *evidence*, the proof that requests were reaching the container and that the
+`/healthz` interception was therefore GFE's doing and not the app's. It was good
+evidence. I read it purely as a signal and never once as a symptom, because I was
+debugging as an operator holding a hypothesis, and to an operator a FastAPI 404 at
+the root is unremarkable. To the first person who pastes a demo URL into a
+browser, it is the whole product failing to start. Same twenty-two bytes.
+
+So: `GET /` now answers. One handler, two audiences — a browser (`Accept:
+text/html`) gets a small card naming the endpoints, everything else gets the same
+content as JSON, both rendered from one `SERVICE` dict so they cannot drift.
+
+One wrinkle underneath it, of the same family as the last three. The card prints
+a paste-able `curl` built from `request.base_url`, and Cloud Run terminates TLS
+upstream: the request reaches the container as plain `http`, and uvicorn honours
+`X-Forwarded-Proto` only from `127.0.0.1`, which Google's frontend is not. The
+landing page would have handed every visitor an `http://` command for an
+https-only service. Read the header where it is needed rather than granting
+global `X-Forwarded-*` trust for the sake of one string.
+
+The lesson from the previous entry was "only the run tells you". This one narrows
+it: only a run *by someone who is not you* tells you. I had the output in my
+terminal and drew the wrong conclusion from it, not because the evidence was
+lacking but because I already knew what I was looking for.
+
+Three tests, at `tests/test_engine.py::test_root_is_not_a_404` and the two beside
+it. 364 tests.

@@ -129,7 +129,7 @@ the stack every 15 minutes, so the answers are against live data whenever you as
 
 ```bash
 uv sync --group dev
-uv run pytest            # 361 tests, offline: no network, no credentials
+uv run pytest            # 364 tests, offline: no network, no credentials
 uv run ruff check .
 ```
 

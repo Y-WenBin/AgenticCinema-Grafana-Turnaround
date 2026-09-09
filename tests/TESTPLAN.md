@@ -10,7 +10,7 @@ Run everything:
 
 ```bash
 uv sync --group dev
-uv run pytest -q          # 361 tests, no network, no credentials
+uv run pytest -q          # 364 tests, no network, no credentials
 uv run ruff check .       # clean
 ```
 
@@ -129,6 +129,7 @@ onto `shot_id` / `sequence` / `department` — and the crunch forecast that foll
 | Startup config validation | auto | With `GOOGLE_CLOUD_PROJECT` / Grafana env unset, `agent.run.ask()` returns exit 2 with a message naming the missing keys; `/healthz` reports `vertex_ready` / `grafana_ready` honestly. | `test_reproducibility.py::test_startup_refuses_incomplete_config` |
 | **Edge — submission compliance** | auto | `LICENSE` exists and is Apache-2.0; `pyproject.toml` declares that license; `README.md` carries a runnable quickstart (`uv sync`, `uv run pytest`); `deploy/README.md` documents the init/deploy path. | `test_reproducibility.py::test_repo_is_submission_compliant` |
 | `/ask` contract | auto | The endpoint returns exactly `answer`, `timeline`, `evaluation`, `response_id`, `circuit_breaker_tripped`, `halted_by`, `halt_detail`, `grafana_url`; an unconfigured server returns a single `error` naming the missing keys instead of a partial body; a question outside 3..2000 characters is rejected with 422 before any Gemini call is made. | `test_engine.py` |
+| The front door is not a 404 | auto | `GET /` answers 200 with what the service is and how to call it — HTML to a browser, the same content as JSON to everything else, from one `SERVICE` dict so they cannot drift. FastAPI declares no root route unless one is written, so the first person to paste the hosted URL into a browser saw `{"detail":"Not Found"}` against a perfectly healthy service. The paste-able example honours `X-Forwarded-Proto`, because Cloud Run terminates TLS upstream and uvicorn trusts that header only from `127.0.0.1`. | `test_engine.py::test_root_is_not_a_404`, `::test_root_serves_html_to_a_browser_and_json_to_everything_else`, `::test_root_example_url_survives_a_terminating_proxy` |
 | `/health` and `/healthz` are one pure read | auto | It reports the resolved readiness flags, MCP mode and Gemini-call ceiling without mutating process env or building an agent, so a Cloud Run probe cannot have side effects. Both paths return the same body: Google Frontend swallows the exact path `/healthz` on `*.run.app`, so the hosted URL is only reachable at `/health`. | `test_engine.py::test_healthz_is_a_pure_read_and_publishes_the_resolved_ceiling`, `::test_health_is_reachable_under_both_paths` |
 | Telemetry misconfiguration is a named startup error | auto | A missing `OTEL_EXPORTER_OTLP_ENDPOINT` fails with a message pointing at `.env.example`, not a connection timeout mid-demo. Partial exporter injection wires the signals given and discards the rest rather than raising from inside the OTel SDK. | `test_providers.py` |
 | Deploy image is buildable | manual | `docker build -t turnaround .` succeeds; `mcp-grafana` checksum matches the pin. | see Part 6 |
