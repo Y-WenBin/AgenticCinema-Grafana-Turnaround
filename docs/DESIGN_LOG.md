@@ -386,7 +386,7 @@ at, and there was nothing to *try*. The endpoint returned JSON to a browser and
 that was the entire interface. Fixing the 404 at `/` earlier today had made the
 front door answer; it had not made it a door anyone wanted to walk through.
 
-`web/index.html` is now a playground. The four questions from `docs/DEMO.md` —
+`web/index.html` is now a playground. The four questions —
 the ones verified cold against the live stack — are one click each, and each is
 labelled with *what it proves* rather than just what it asks, because a stranger
 should not have to reverse-engineer why one question is more interesting than

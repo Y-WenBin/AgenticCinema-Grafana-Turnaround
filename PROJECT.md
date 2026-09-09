@@ -11,7 +11,6 @@ record — including every bug found on the way — is
 | **`PROJECT.md`** (this file) | Technical reference: architecture, module map, design decisions |
 | [`AGENTS.md`](AGENTS.md) | Orientation for a coding agent or a new contributor: invariants and where things live |
 | [`docs/SETUP.md`](docs/SETUP.md) | End-to-end setup: Grafana Cloud, Google Cloud, a real NLE |
-| [`docs/DEMO.md`](docs/DEMO.md) | The three-minute demo: script, shot list, question set |
 | [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md) | The 2026-09-09 structural review and what changed |
 | [`docs/DESIGN_LOG.md`](docs/DESIGN_LOG.md) | Chronological build record; findings, dated |
 | [`tests/TESTPLAN.md`](tests/TESTPLAN.md) | The reproducibility contract the suite enforces |
@@ -508,7 +507,7 @@ opt-in.
 | 4 | MCP read-only + write instances; ADK pipeline; approval gate; write-back | Four demo questions answered cold, tool timeline showing real MCP calls | ✅ 4/4 |
 | 5 | EvalOps: self-instrumentation, judge tier, EvalOps surface | Trace + eval events land in the same stack; drift and privacy alerts evaluate | ✅ |
 | 6 | Cloud Run deploy *run*; supervisor console | Full demo against the public URL in a clean browser profile | ✅ deployed — [https://turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app) with a public playground at `/`, capped three ways; the *supervisor* console (the approval gate as a UI) is still CLI-only |
-| 7 | Video, README, Devpost | Submitted | in progress — [`docs/DEMO.md`](docs/DEMO.md) |
+| 7 | Video, README, Devpost | Submitted | in progress |
 
 **Open by decision.** Live Kitsu and OpenCue instances: no container runtime on
 the build machine. Source adapters sit behind Protocols so real instances drop in

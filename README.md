@@ -95,7 +95,6 @@ Analysts are read-only *by construction*, not by prompt — they are wired to an
 | [PROJECT.md](PROJECT.md) | Technical reference: architecture, module map, the decisions and why |
 | [AGENTS.md](AGENTS.md) | Orientation for a contributor or a coding agent: invariants, layer map, gotchas |
 | [docs/SETUP.md](docs/SETUP.md) | End-to-end setup — Grafana Cloud, Google Cloud, a real NLE |
-| [docs/DEMO.md](docs/DEMO.md) | The three-minute demo: script, shot list, question set |
 | [docs/CODE_REVIEW.md](docs/CODE_REVIEW.md) | Structural review of the codebase and what changed |
 | [docs/DESIGN_LOG.md](docs/DESIGN_LOG.md) | Dated build record, including every bug found on the way |
 | [tests/TESTPLAN.md](tests/TESTPLAN.md) | The reproducibility contract the suite enforces |
