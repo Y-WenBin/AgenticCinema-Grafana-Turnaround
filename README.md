@@ -90,7 +90,15 @@ Analysts are read-only *by construction*, not by prompt — they are wired to an
 
 ## What's built
 
-Full technical reference and design log: **[PROJECT.md](PROJECT.md)**. End-to-end setup (Grafana Cloud, Google Cloud, a real NLE): **[docs/SETUP.md](docs/SETUP.md)**.
+| Document | What it is for |
+|---|---|
+| [PROJECT.md](PROJECT.md) | Technical reference: architecture, module map, the decisions and why |
+| [AGENTS.md](AGENTS.md) | Orientation for a contributor or a coding agent: invariants, layer map, gotchas |
+| [docs/SETUP.md](docs/SETUP.md) | End-to-end setup — Grafana Cloud, Google Cloud, a real NLE |
+| [docs/DEMO.md](docs/DEMO.md) | The three-minute demo: script, shot list, question set |
+| [docs/CODE_REVIEW.md](docs/CODE_REVIEW.md) | Structural review of the codebase and what changed |
+| [docs/DESIGN_LOG.md](docs/DESIGN_LOG.md) | Dated build record, including every bug found on the way |
+| [tests/TESTPLAN.md](tests/TESTPLAN.md) | The reproducibility contract the suite enforces |
 
 | Part | State |
 |---|---|
@@ -106,7 +114,7 @@ Full technical reference and design log: **[PROJECT.md](PROJECT.md)**. End-to-en
 
 ```bash
 uv sync --group dev
-uv run pytest            # 240+ tests, no credentials needed
+uv run pytest            # 358 tests, offline: no network, no credentials
 uv run ruff check .
 ```
 
@@ -118,6 +126,11 @@ uv run python -m seed.populate
 uv run python -m grafana.provision
 uv run python -m agent.run "Why is SEQ0420 slipping, and what is it costing in artist-days?"
 ```
+
+> **Re-seed before any live run.** The show's history is compressed into a
+> ~45-minute window ending at the moment of seeding, and every query reads it
+> with `last_over_time((…)[2h:])`. A stack seeded hours ago answers everything
+> with nothing, which looks like a broken agent rather than stale data.
 
 Every run self-instruments with the OpenTelemetry GenAI conventions and scores its own answer; the trace, token/latency histograms and `gen_ai.evaluation.result` events land in the same Grafana Cloud stack the agent queries. A per-run Gemini-call ceiling (`TURNAROUND_MAX_LLM_CALLS`, default 40) bounds token spend. Test plan and reproducibility contract: [`tests/TESTPLAN.md`](tests/TESTPLAN.md).
 
