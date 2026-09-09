@@ -13,6 +13,7 @@ replaced with a stub that yields a scripted final event.
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,7 +22,7 @@ from agent import engine
 from agent import run as run_mod
 from agent import serve as serve_mod
 from agent.approval import AutoApprover
-from agent.config import Settings
+from agent.config import REPO_ROOT, Settings
 
 ANSWER = ("Answer: SEQ0420 is slipping. The join shows 4.5 core-hours per comp "
           "iteration against 2.2 elsewhere, and 40 core-h of render waste, from "
@@ -76,6 +77,16 @@ def _runner_raising(exc: Exception):
             raise exc
 
     return _Runner
+
+
+def _counting(log: list, inner):
+    """Wrap answer_question so a test can prove it was *not* reached."""
+
+    async def wrapper(*args, **kwargs):
+        log.append(kwargs.get("question") or args[0])
+        return await inner(*args, **kwargs)
+
+    return wrapper
 
 
 @pytest.fixture
@@ -315,35 +326,138 @@ def test_root_is_not_a_404():
     assert response.status_code == 200
 
 
-def test_root_serves_html_to_a_browser_and_json_to_everything_else():
-    """One handler, two audiences, one source of truth."""
+def test_root_serves_the_playground_to_a_browser_and_json_to_everything_else():
+    """One route, two audiences: a person gets something to try, a script gets
+    a description it can parse."""
     client = TestClient(serve_mod.app)
 
     page = client.get("/", headers={"accept": "text/html,application/xhtml+xml"})
+    assert page.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
-    body = page.text
-    for path in serve_mod.SERVICE["endpoints"]:
-        assert path in body, f"{path} missing from the landing page"
+    assert "<textarea" in page.text, "a playground needs somewhere to type"
+    assert "/ask" in page.text
 
     machine = client.get("/", headers={"accept": "application/json"})
     assert machine.json() == serve_mod.SERVICE
     assert machine.json()["read_only"] is True
 
 
-def test_root_example_url_survives_a_terminating_proxy():
-    """Cloud Run terminates TLS upstream, so the request arrives as plain http.
+def test_the_page_never_goes_stale_against_a_cached_budget():
+    """It prints how much budget is left, so a judge reloading to see whether a
+    slot freed up must not be handed the copy from ten minutes ago."""
+    page = TestClient(serve_mod.app).get("/", headers={"accept": "text/html"})
+    assert "no-store" in page.headers.get("cache-control", "")
 
-    uvicorn trusts `X-Forwarded-Proto` only from 127.0.0.1 and Cloud Run's
-    frontend is not that, so an unguarded `request.base_url` would hand the
-    visitor an `http://` command for an https-only service.
+
+def test_the_page_only_calls_endpoints_that_exist():
+    """The playground is a static file, so nothing in Python stops it fetching
+    a route that was since renamed -- the failure would be invisible until a
+    judge clicked the button. Every same-origin path it references must be a
+    real route or a real file.
+
+    (This replaces an earlier test that the server-rendered curl example used
+    the right scheme behind Cloud Run's TLS termination. The page now builds
+    that string from `location.origin` in the browser, which knows its own
+    scheme for certain, so the whole class of bug is gone rather than tested.)
     """
+    html = (REPO_ROOT / "web" / "index.html").read_text()
+    referenced = set(re.findall(r'(?:fetch\(|src=|href=)"(/[\w./-]*)"', html))
+    assert {"/ask", "/api/capacity", "/banner.png"} <= referenced, "expected calls missing"
+
+    routes = {getattr(r, "path", None) for r in serve_mod.app.routes}
+    for path in referenced:
+        if (REPO_ROOT / "web" / path.lstrip("/")).is_file():
+            continue
+        assert path in routes, f"the page calls {path}, which is not a route"
+
+
+def test_the_hackathon_card_is_the_link_preview_not_just_decoration():
+    """A judge meets this project as a pasted link at least as often as a page."""
+    html = (REPO_ROOT / "web" / "index.html").read_text()
+    assert 'property="og:image"' in html and "/banner.png" in html
+    assert (REPO_ROOT / "web" / "banner.png").is_file()
+
+
+def test_ask_refuses_past_the_cap_without_running_the_pipeline(offline, monkeypatch):
+    """The refusal must be cheaper than the answer.
+
+    A limiter that admits the request, builds the agents and *then* declines is
+    a slower way to spend the budget, not a guard on it.
+    """
+    from agent.limits import Gatekeeper
+
+    runs = []
+    monkeypatch.setattr(serve_mod.engine, "answer_question",
+                        _counting(runs, serve_mod.engine.answer_question))
+    monkeypatch.setattr(serve_mod, "gate", Gatekeeper(per_client=1, daily=99, concurrent=9))
     client = TestClient(serve_mod.app)
-    body = client.get(
-        "/",
-        headers={"accept": "text/html", "x-forwarded-proto": "https"},
-    ).text
-    assert "https://testserver/ask" in body
-    assert "http://testserver" not in body
+
+    assert client.post("/ask", json={"question": "why is SEQ0420 slipping?"}).status_code == 200
+    refused = client.post("/ask", json={"question": "and again?"})
+
+    assert refused.status_code == 429
+    assert len(runs) == 1, "the refused request must not have run the pipeline"
+    body = refused.json()
+    assert body["reason"] == "per_visitor"
+    assert body["retry_after"] > 0
+    assert refused.headers["Retry-After"] == str(body["retry_after"])
+
+
+def test_a_finished_run_gives_its_slot_back(offline, monkeypatch):
+    """Held slots are how a demo dies: it reports 'busy' forever with nothing
+    running. The release is in a `finally`, and this is what pins it there."""
+    from agent.limits import Gatekeeper
+
+    monkeypatch.setattr(serve_mod, "gate", Gatekeeper(per_client=99, daily=99, concurrent=1))
+    client = TestClient(serve_mod.app)
+    for _ in range(3):
+        assert client.post("/ask", json={"question": "why is SEQ0420 slipping?"}).status_code == 200
+    assert serve_mod.gate.snapshot()["in_flight"] == 0
+
+
+def test_a_crashing_run_gives_its_slot_back_too(offline, monkeypatch):
+    """The case that actually leaks: an exception on the way out."""
+    from agent.limits import Gatekeeper
+
+    async def boom(*_a, **_k):
+        raise RuntimeError("vertex fell over")
+
+    monkeypatch.setattr(serve_mod.engine, "answer_question", boom)
+    monkeypatch.setattr(serve_mod, "gate", Gatekeeper(per_client=99, daily=99, concurrent=1))
+    client = TestClient(serve_mod.app)
+
+    with pytest.raises(RuntimeError):
+        client.post("/ask", json={"question": "why is SEQ0420 slipping?"})
+    assert serve_mod.gate.snapshot()["in_flight"] == 0, "slot leaked on the error path"
+
+
+def test_capacity_is_public_so_the_page_can_warn_before_the_wall(offline, monkeypatch):
+    """Better to say 'no runs left today' up front than after a judge has typed
+    a question and waited a minute for the refusal."""
+    from agent.limits import Gatekeeper
+
+    monkeypatch.setattr(serve_mod, "gate", Gatekeeper(per_client=9, daily=5, concurrent=9))
+    client = TestClient(serve_mod.app)
+    before = client.get("/api/capacity").json()
+    assert before == {"asks_today": 0, "daily_budget": 5, "in_flight": 0,
+                      "concurrent_limit": 9, "per_visitor_hourly": 9}
+
+    client.post("/ask", json={"question": "why is SEQ0420 slipping?"})
+    assert client.get("/api/capacity").json()["asks_today"] == 1
+
+
+def test_visitors_are_told_apart_by_the_forwarded_address(offline, monkeypatch):
+    """Behind Cloud Run every request has the same peer address, so without
+    X-Forwarded-For the first visitor's quota would be everyone's quota."""
+    from agent.limits import Gatekeeper
+
+    monkeypatch.setattr(serve_mod, "gate", Gatekeeper(per_client=1, daily=99, concurrent=9))
+    client = TestClient(serve_mod.app)
+    q = {"question": "why is SEQ0420 slipping?"}
+
+    assert client.post("/ask", json=q, headers={"x-forwarded-for": "203.0.113.1"}).status_code == 200
+    assert client.post("/ask", json=q, headers={"x-forwarded-for": "203.0.113.1"}).status_code == 429
+    assert client.post("/ask", json=q, headers={"x-forwarded-for": "203.0.113.9"}).status_code == 200
 
 
 def test_health_is_reachable_under_both_paths(monkeypatch):

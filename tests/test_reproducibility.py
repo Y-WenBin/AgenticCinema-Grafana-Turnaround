@@ -405,6 +405,40 @@ def test_deploy_builds_the_dockerfile_not_a_buildpack():
     assert script.count("--image \"$IMAGE\"") == 2, "service and job share one image"
 
 
+def test_the_playground_ships_in_the_image():
+    """`web/` was excluded from both the image and the build upload while it was
+    an empty placeholder. It is now what the service serves at `/`, so an
+    exclusion here would deploy a landing page that 404s its own banner --
+    and only in production, since a local run reads the file straight off disk.
+    """
+    for name in (".dockerignore", ".gcloudignore"):
+        lines = [ln.strip() for ln in (REPO / name).read_text().splitlines()]
+        assert not any(ln.rstrip("/") == "web" for ln in lines), \
+            f"{name} excludes web/, so the deployed page would lose its assets"
+
+    web = REPO / "web"
+    for asset in ("index.html", "banner.png", "favicon.svg"):
+        assert (web / asset).is_file(), f"web/{asset} is referenced by the page"
+
+
+def test_the_public_endpoint_is_capped_in_three_directions():
+    """Open to everyone and unbounded are different things: every /ask spends
+    real Gemini calls on a real bill."""
+    limits = (REPO / "agent" / "limits.py").read_text()
+    for reason in ("daily_budget", "per_visitor", "busy"):
+        assert reason in limits
+
+    serve = (REPO / "agent" / "serve.py").read_text()
+    assert "gate.admit(" in serve, "/ask must pass through admission control"
+    assert "finally:" in serve and "gate.release()" in serve, \
+        "the concurrency slot must be returned on the error path too"
+
+    config = (REPO / "agent" / "config.py").read_text()
+    for knob in ("TURNAROUND_ASKS_PER_HOUR", "TURNAROUND_ASKS_PER_DAY",
+                 "TURNAROUND_CONCURRENT_ASKS"):
+        assert knob in config, f"{knob} must be tunable without a code change"
+
+
 def test_deploy_keeps_the_demo_data_alive():
     """A hosted demo needs the re-seed job; the seed ages out in about an hour."""
     script = (REPO / "deploy" / "deploy.sh").read_text()

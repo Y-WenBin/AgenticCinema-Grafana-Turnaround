@@ -11,9 +11,9 @@ __pycache__
 .env.*
 !.env.example
 .secrets
-web
 deploy/*.md
 tests
 *.md
 !README.md
+# web/ ships: it is the playground the deployed service serves at `/`.
 agent/_writeback.jsonl

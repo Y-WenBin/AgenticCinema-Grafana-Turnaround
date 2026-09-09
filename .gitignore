@@ -14,3 +14,4 @@ agent/_writeback.jsonl
 # secrets
 .secrets/
 gcp-sa*.json
+.claude/launch.json

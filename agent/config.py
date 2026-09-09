@@ -64,6 +64,15 @@ DEFAULT_ANALYST_MODEL = "gemini-2.5-flash"
 #: ``TURNAROUND_MAX_LLM_CALLS`` for a legitimately longer run.
 DEFAULT_MAX_LLM_CALLS = 40
 
+#: Public-endpoint guardrails. The deployed demo is open -- no key, no signup --
+#: so these are what stands between a curious judge and an unbounded Vertex
+#: bill. They are *per instance* (see ``agent/limits.py``): with
+#: ``--max-instances 2`` the real ceiling is twice DEFAULT_ASKS_PER_DAY, which
+#: is the number to sanity-check against a billing alert, not this one.
+DEFAULT_ASKS_PER_HOUR = 8       # per visitor: enough to explore, not to farm
+DEFAULT_ASKS_PER_DAY = 200      # everyone together: the actual budget
+DEFAULT_CONCURRENT_ASKS = 2     # a run holds an MCP subprocess for ~40s
+
 
 def _int_env(name: str, default: int) -> int:
     try:
@@ -116,6 +125,10 @@ class Settings:
     analyst_model: str = DEFAULT_ANALYST_MODEL
     #: per-run ceiling on Gemini calls (the circuit breaker)
     max_llm_calls: int = DEFAULT_MAX_LLM_CALLS
+    #: public-endpoint guardrails, per instance -- see ``agent/limits.py``
+    asks_per_hour: int = DEFAULT_ASKS_PER_HOUR
+    asks_per_day: int = DEFAULT_ASKS_PER_DAY
+    concurrent_asks: int = DEFAULT_CONCURRENT_ASKS
 
     @property
     def grafana_ready(self) -> bool:
@@ -170,6 +183,9 @@ def settings() -> Settings:
         analyst_model=os.environ.get("TURNAROUND_GEMINI_MODEL", "").strip()
         or DEFAULT_ANALYST_MODEL,
         max_llm_calls=_int_env("TURNAROUND_MAX_LLM_CALLS", DEFAULT_MAX_LLM_CALLS),
+        asks_per_hour=_int_env("TURNAROUND_ASKS_PER_HOUR", DEFAULT_ASKS_PER_HOUR),
+        asks_per_day=_int_env("TURNAROUND_ASKS_PER_DAY", DEFAULT_ASKS_PER_DAY),
+        concurrent_asks=_int_env("TURNAROUND_CONCURRENT_ASKS", DEFAULT_CONCURRENT_ASKS),
     )
 
 

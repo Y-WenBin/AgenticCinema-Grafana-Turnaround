@@ -26,16 +26,30 @@ from __future__ import annotations
 
 import os
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from agent import engine
 from agent.approval import AutoApprover
+from agent.config import REPO_ROOT
 from agent.config import settings as load_settings
 from agent.engine import HostedMcpNotAuthorized, NotConfigured
+from agent.limits import Gatekeeper, client_id
 
 app = FastAPI(title="Turnaround agent", version="0.1.0")
+
+WEB = REPO_ROOT / "web"
+
+#: Built once per process, from the same settings everything else reads. The
+#: counters live here, so they are per instance -- `agent/limits.py` explains
+#: exactly what that does and does not bound.
+_cfg0 = load_settings()
+gate = Gatekeeper(
+    per_client=_cfg0.asks_per_hour,
+    daily=_cfg0.asks_per_day,
+    concurrent=_cfg0.concurrent_asks,
+)
 
 
 class AskRequest(BaseModel):
@@ -53,7 +67,9 @@ SERVICE = {
     ),
     "read_only": True,
     "endpoints": {
+        "GET /": "the playground, in a browser",
         "GET /health": "liveness and resolved configuration",
+        "GET /api/capacity": "what the demo's daily budget has left",
         "POST /ask": 'ask a question: {"question": "why is SEQ0420 slipping?"}',
         "GET /docs": "OpenAPI / Swagger UI",
     },
@@ -69,37 +85,38 @@ SERVICE = {
 # A public demo URL's first visitor is a person with a browser, and FastAPI
 # declares no route at `/` -- so the front door answered `{"detail":"Not Found"}`,
 # which reads as a broken deployment when the service is perfectly healthy. One
-# handler, two audiences: a browser (Accept: text/html) gets a readable card, and
-# every other client -- curl, a probe, a judge's script -- gets the same content
-# as JSON. Keep them fed from one `SERVICE` dict so they can never drift.
+# handler, two audiences: a browser (Accept: text/html) gets the playground in
+# `web/`, and every other client -- curl, a probe, a judge's script -- gets this
+# same description as JSON.
 @app.get("/", response_model=None)
-def index(request: Request) -> dict | HTMLResponse:
-    if "text/html" not in request.headers.get("accept", ""):
-        return SERVICE
-    rows = "\n".join(
-        f"<tr><td><code>{path}</code></td><td>{what}</td></tr>"
-        for path, what in SERVICE["endpoints"].items()
-    )
-    # uvicorn trusts `X-Forwarded-Proto` only from 127.0.0.1, and Cloud Run's
-    # frontend is not that -- so `request.base_url` says `http` on an https
-    # service and the paste-able example would be wrong. Read the header here
-    # rather than trusting every `X-Forwarded-*` globally for one string.
-    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-    base = str(request.base_url).rstrip("/")
-    base = base.replace("http://", f"{scheme}://", 1) if base.startswith("http://") else base
-    return HTMLResponse(
-        "<!doctype html><meta charset=utf-8>"
-        "<title>Turnaround</title>"
-        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:46rem;"
-        "margin:4rem auto;padding:0 1.5rem}td{padding:.2rem .8rem .2rem 0;"
-        "vertical-align:top}pre{background:#f4f4f5;padding:1rem;overflow-x:auto}"
-        "</style>"
-        "<h1>Turnaround</h1>"
-        f"<p>{SERVICE['what']}</p>"
-        f"<table>{rows}</table>"
-        f"<pre>{SERVICE['example'].replace('$URL', base)}</pre>"
-        f"<p>Read-only by construction. <a href=\"{SERVICE['source']}\">Source</a>.</p>"
-    )
+def index(request: Request) -> dict | FileResponse:
+    page = WEB / "index.html"
+    if "text/html" in request.headers.get("accept", "") and page.is_file():
+        # no-store: the page embeds the live budget, and a judge reloading to
+        # see whether a slot freed up must not be served yesterday's number.
+        return FileResponse(page, headers={"Cache-Control": "no-store"})
+    return SERVICE
+
+
+@app.get("/banner.png", include_in_schema=False)
+def banner() -> FileResponse:
+    """The hackathon card -- page hero and, more usefully, the link preview
+    every chat client and submission page renders from `og:image`."""
+    return FileResponse(WEB / "banner.png", media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+def favicon() -> FileResponse:
+    return FileResponse(WEB / "favicon.svg", media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/api/capacity")
+def capacity() -> dict:
+    """What the demo has left, so the page can say so before someone types a
+    question and waits a minute to be told no."""
+    return gate.snapshot()
 
 
 # Two paths, one handler. Google Frontend swallows the exact path `/healthz` on
@@ -121,8 +138,29 @@ def healthz() -> dict:
     }
 
 
-@app.post("/ask")
-async def ask_endpoint(req: AskRequest) -> dict:
+@app.post("/ask", response_model=None)
+async def ask_endpoint(req: AskRequest, request: Request, response: Response) -> dict | JSONResponse:
+    """Run the pipeline for one question, behind the public guardrails.
+
+    Admission happens before any work: a refusal must cost a Gemini call less
+    than an answer does, or the rate limiter is just a slower way to spend the
+    budget. The slot is returned in `finally` -- an exception that skipped the
+    release would leak capacity one failed run at a time until the endpoint
+    wedged at "busy" with nothing actually running.
+    """
+    verdict = gate.admit(client_id(
+        request.headers.get("x-forwarded-for", ""),
+        request.client.host if request.client else "",
+    ))
+    if not verdict.allowed:
+        return JSONResponse(
+            status_code=429,
+            headers=verdict.headers,
+            content={"error": verdict.message, "reason": verdict.reason,
+                     "retry_after": verdict.retry_after},
+        )
+    response.headers.update(verdict.headers)
+
     try:
         cfg = engine.resolved_settings()
         outcome = await engine.answer_question(
@@ -135,6 +173,8 @@ async def ask_endpoint(req: AskRequest) -> dict:
         )
     except (NotConfigured, HostedMcpNotAuthorized) as exc:
         return {"error": str(exc)}
+    finally:
+        gate.release()
 
     scorecard = outcome.scorecard
     return {
