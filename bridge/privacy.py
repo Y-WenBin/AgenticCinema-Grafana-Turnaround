@@ -21,7 +21,6 @@ import hmac
 import os
 import re
 from collections.abc import Iterable, Mapping
-from typing import TypeVar
 
 #: Minimum number of distinct people behind any crew-load figure.
 #: Below this, an "overloaded pool" alert is really an alert about one person.
@@ -61,13 +60,13 @@ def pseudonymize(artist_id: str) -> str:
 # Anything that looks like a human name, an email, or a Kitsu UUID must not be
 # exported. Kept deliberately broad: a false positive costs a label, a false
 # negative costs someone their job.
-_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", re.I)
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", re.IGNORECASE)
 _UUID_RE = re.compile(
-    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE
 )
 _PII_KEY_RE = re.compile(
     r"(^|[._-])(email|mail|first_?name|last_?name|full_?name|phone|person_id|user_id)($|[._-])",
-    re.I,
+    re.IGNORECASE,
 )
 
 
@@ -90,10 +89,12 @@ def assert_no_pii(attributes: Mapping[str, object], *, where: str = "export") ->
             )
 
 
-T = TypeVar("T")
+def may_report_crew_load(pool_members: Iterable[str], *, minimum: int = MIN_POOL_SIZE) -> bool:
+    """Whether a crew-load figure for this pool may be surfaced at all."""
+    return len(set(pool_members)) >= minimum
 
 
-def aggregation_floor(
+def aggregation_floor[T](
     groups: Mapping[T, Iterable[str]],
     *,
     minimum: int = MIN_POOL_SIZE,
@@ -107,12 +108,8 @@ def aggregation_floor(
     """
     kept: dict[T, int] = {}
     for key, members in groups.items():
-        headcount = len(set(members))
-        if headcount >= minimum:
-            kept[key] = headcount
+        people = set(members)
+        if may_report_crew_load(people, minimum=minimum):
+            kept[key] = len(people)
     return kept
 
-
-def may_report_crew_load(pool_members: Iterable[str], *, minimum: int = MIN_POOL_SIZE) -> bool:
-    """Whether a crew-load figure for this pool may be surfaced at all."""
-    return len(set(pool_members)) >= minimum

@@ -89,27 +89,46 @@ def test_no_non_google_ai_sdk_on_the_runtime_path():
     assert not offenders, offenders
 
 
-def test_circuit_breaker_is_wired():
+def test_circuit_breaker_is_wired(monkeypatch):
     """R7 / orchestration edge: a per-run Gemini-call ceiling is configured and
-    passed to ADK on every run path."""
-    from agent import config
+    actually reaches ADK's RunConfig on the one shared run path."""
+    from agent import config, engine
+    from agent.approval import AutoApprover
 
-    assert isinstance(config.MAX_LLM_CALLS, int) and config.MAX_LLM_CALLS > 0
+    assert config.DEFAULT_MAX_LLM_CALLS > 0
     assert config._int_env("TURNAROUND_MAX_LLM_CALLS_UNSET_XYZ", 40) == 40
     assert config._int_env("PATH", 40) == 40  # unparseable -> default
 
-    run_src = (REPO / "agent" / "run.py").read_text()
-    serve_src = (REPO / "agent" / "serve.py").read_text()
-    for src in (run_src, serve_src):
-        assert "RunConfig(max_llm_calls=MAX_LLM_CALLS)" in src
-        assert "run_config=run_config" in src
-        assert "LlmCallsLimitExceededError" in src
+    # The ceiling the settings resolve to is the ceiling ADK is given -- asserted
+    # by capturing the RunConfig the runner is actually driven with, not by
+    # grepping the source.
+    seen: dict[str, object] = {}
+
+    class _Runner:
+        def __init__(self, **_kw):
+            pass
+
+        async def run_async(self, **kw):
+            seen["max_llm_calls"] = kw["run_config"].max_llm_calls
+            if False:  # pragma: no cover -- makes this an async generator
+                yield
+
+    monkeypatch.setattr(engine, "Runner", _Runner)
+    outcome = _run(engine.answer_question(
+        "q", approver=AutoApprover(approve=False), conversation_id="t",
+        settings=_cfg(max_llm_calls=7), observability=False, evaluate=False))
+
+    assert seen["max_llm_calls"] == 7
+    assert outcome.circuit_breaker_tripped is False
+    # and the breaker is caught, not raised, on the single shared path
+    assert "LlmCallsLimitExceededError" in (REPO / "agent" / "engine.py").read_text()
 
 
 def test_circuit_breaker_trips_cleanly(monkeypatch, capsys):
     """The limit surfaces as a non-zero exit + a note, not a traceback."""
     from google.adk.agents.invocation_context import LlmCallsLimitExceededError
 
+    from agent import engine
     from agent import run as run_mod
 
     class _BoomRunner:
@@ -122,9 +141,8 @@ def test_circuit_breaker_trips_cleanly(monkeypatch, capsys):
                 yield
             raise LlmCallsLimitExceededError("Max number of llm calls `1` exceeded")
 
-    monkeypatch.setattr(run_mod, "bootstrap_vertex", _cfg)
-    monkeypatch.setattr(run_mod, "_instrument", lambda _enabled: None)
-    monkeypatch.setattr(run_mod, "Runner", _BoomRunner)
+    monkeypatch.setattr(engine, "resolved_settings", _cfg)
+    monkeypatch.setattr(engine, "Runner", _BoomRunner)
 
     rc = _run(run_mod.ask("why is SEQ0420 slipping?", approve=False, interactive=False,
                           observability=False, evaluate=False))
@@ -209,6 +227,7 @@ def test_mock_mcp_payload_is_classified_and_recorded():
 def test_auth_failure_is_handled_gracefully(monkeypatch):
     """Edge: hosted mode with no/expired OAuth bearer -> a re-authorize pointer,
     not a crash, at both the toolset seam and the CLI entrypoint."""
+    from agent import engine
     from agent import run as run_mod
     from agent.mcp_grafana import (
         SCHEDULE_TOOLS,
@@ -223,8 +242,8 @@ def test_auth_failure_is_handled_gracefully(monkeypatch):
     def _boom(**_kw):
         raise HostedMcpNotAuthorized("re-authorize: run `uv run python -m agent.mcp_login`")
 
-    monkeypatch.setattr(run_mod, "bootstrap_vertex", _cfg)
-    monkeypatch.setattr(run_mod, "build_system", _boom)
+    monkeypatch.setattr(engine, "resolved_settings", _cfg)
+    monkeypatch.setattr(engine, "build_system", _boom)
     rc = _run(run_mod.ask("q", approve=False, interactive=False,
                           observability=False, evaluate=False))
     assert rc == 2
@@ -325,11 +344,16 @@ def test_oversized_tool_payload_is_capped_not_dumped():
     {"grafana_url": "", "grafana_token": ""},                      # grafana only missing
 ])
 def test_startup_refuses_incomplete_config(monkeypatch, over):
-    """Startup validation: an incomplete environment is a clean exit 2, not a
-    later opaque failure inside a tool call."""
+    """Startup validation: an incomplete environment is a clean exit 2 naming the
+    missing keys, not a later opaque failure inside a tool call."""
+    from agent import engine
     from agent import run as run_mod
 
-    monkeypatch.setattr(run_mod, "bootstrap_vertex", lambda: _cfg(**over))
+    monkeypatch.setattr(engine, "bootstrap_vertex", lambda: _cfg(**over))
+    with pytest.raises(engine.NotConfigured) as exc:
+        engine.resolved_settings()
+    assert ".env" in str(exc.value)
+
     rc = _run(run_mod.ask("q", approve=False, interactive=False,
                           observability=False, evaluate=False))
     assert rc == 2

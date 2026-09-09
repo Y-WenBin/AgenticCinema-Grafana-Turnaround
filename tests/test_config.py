@@ -1,0 +1,295 @@
+"""Runtime configuration: ``.env`` loading and the single resolved ``Settings``.
+
+``agent/config.py`` decides which model runs, how many Gemini calls a run may
+make, which MCP mode is used and where the binary is. Every one of those is
+read from the environment *after* ``.env`` is loaded, so none of it can be a
+module-level constant -- a constant freezes at import time, which is before
+``load_env()`` has run, and a value set only in ``.env`` would be silently
+ignored. These tests hold that line.
+"""
+
+from __future__ import annotations
+
+import ast
+import os
+from pathlib import Path
+
+import pytest
+
+from agent import config
+from agent.config import (
+    DEFAULT_ANALYST_MODEL,
+    DEFAULT_MAX_LLM_CALLS,
+    Settings,
+    _find_mcp_grafana,
+    _int_env,
+    bootstrap_vertex,
+    load_env,
+    settings,
+)
+
+ENV_KEYS = (
+    "GRAFANA_URL", "GRAFANA_SERVICE_ACCOUNT_TOKEN", "GRAFANA_CLOUD_MCP_TOKEN",
+    "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_GENAI_USE_VERTEXAI", "GRAFANA_DS_PROM_UID", "GRAFANA_DS_LOKI_UID",
+    "GRAFANA_DS_TEMPO_UID", "TURNAROUND_MCP_MODE", "TURNAROUND_GEMINI_MODEL",
+    "TURNAROUND_MAX_LLM_CALLS", "TURNAROUND_MCP_GRAFANA_BIN",
+)
+
+
+@pytest.fixture
+def clean_env(monkeypatch, tmp_path):
+    """A process with none of Turnaround's variables set and no repo ``.env``.
+
+    ``settings()`` reads the repo's real ``.env``; point it at an empty tmp dir
+    so a developer's local credentials cannot make a test pass or fail.
+    """
+    for key in ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(config, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(config, "CLOUD_MCP_TOKEN_FILE", tmp_path / ".secrets" / "token")
+    return tmp_path
+
+
+def _write_env(root: Path, body: str) -> Path:
+    path = root / ".env"
+    path.write_text(body)
+    return path
+
+
+# --------------------------------------------------------------------------- #
+# load_env
+# --------------------------------------------------------------------------- #
+
+
+def test_load_env_populates_unset_keys(clean_env, monkeypatch):
+    _write_env(clean_env, "GRAFANA_URL=https://stack.grafana.net\n")
+    load_env()
+    assert os.environ["GRAFANA_URL"] == "https://stack.grafana.net"
+
+
+def test_a_real_exported_variable_always_wins(clean_env, monkeypatch):
+    """CI and Cloud Run export the truth; ``.env`` is only a local fallback."""
+    monkeypatch.setenv("GRAFANA_URL", "https://exported.example")
+    _write_env(clean_env, "GRAFANA_URL=https://from-dotenv.example\n")
+    load_env()
+    assert os.environ["GRAFANA_URL"] == "https://exported.example"
+
+
+def test_comments_blanks_and_malformed_lines_are_skipped(clean_env):
+    _write_env(clean_env, "\n# a comment\nNOT_A_PAIR\n  \nGRAFANA_URL=https://ok\n")
+    load_env()
+    assert os.environ["GRAFANA_URL"] == "https://ok"
+    assert "NOT_A_PAIR" not in os.environ
+
+
+def test_surrounding_quotes_are_stripped_but_the_value_is_literal(clean_env):
+    """An OTLP auth header is a literal: no interpolation, no unescaping."""
+    _write_env(clean_env, 'GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_$NOT_EXPANDED_x"\n')
+    load_env()
+    assert os.environ["GRAFANA_SERVICE_ACCOUNT_TOKEN"] == "glsa_$NOT_EXPANDED_x"
+
+
+def test_a_missing_env_file_is_not_an_error(clean_env):
+    load_env()  # no .env written
+    assert "GRAFANA_URL" not in os.environ
+
+
+def test_an_equals_sign_in_the_value_survives(clean_env):
+    """base64 payloads in ``OTEL_EXPORTER_OTLP_HEADERS`` end in ``=`` padding."""
+    _write_env(clean_env, "GRAFANA_SERVICE_ACCOUNT_TOKEN=Basic dXNlcjpwYXNz==\n")
+    load_env()
+    assert os.environ["GRAFANA_SERVICE_ACCOUNT_TOKEN"] == "Basic dXNlcjpwYXNz=="
+
+
+# --------------------------------------------------------------------------- #
+# The regression this module exists to prevent
+# --------------------------------------------------------------------------- #
+
+
+def test_dotenv_actually_drives_the_model_the_ceiling_and_the_mode(clean_env):
+    """R4 + R7 regression: a knob set only in ``.env`` must reach ``Settings``.
+
+    These three were once module-level constants read at import time, i.e.
+    before ``load_env()`` ran, so ``.env`` set them and nothing used them: a run
+    silently used flash and a ceiling of 40 while ``.env`` said otherwise.
+    """
+    _write_env(clean_env, "TURNAROUND_GEMINI_MODEL=gemini-2.5-pro\n"
+                          "TURNAROUND_MAX_LLM_CALLS=7\n"
+                          "TURNAROUND_MCP_MODE=hosted\n")
+    cfg = settings()
+    assert cfg.analyst_model == "gemini-2.5-pro"
+    assert cfg.max_llm_calls == 7
+    assert cfg.mcp_mode == "hosted"
+
+
+def test_no_module_constant_reads_the_environment_at_import(clean_env):
+    """The structural guard behind the test above.
+
+    ``agent/config.py`` must not call ``os.environ`` at module level: anything
+    it assigns there is fixed before ``load_env()`` runs. The four names below
+    were exactly that, and each one silently ignored its ``.env`` value.
+    """
+    for gone in ("ANALYST_MODEL", "PRODUCER_MODEL", "MAX_LLM_CALLS", "MCP_MODE"):
+        assert not hasattr(config, gone), (
+            f"agent.config.{gone} is back as a module constant; it freezes at "
+            "import, before load_env(), so .env cannot reach it. Put it on Settings."
+        )
+
+    # Generalised: no module-level assignment anywhere in the file may read the
+    # environment. Inside a function body is fine -- that runs after load_env().
+    module_level_assignments = [
+        node for node in ast.parse(Path(config.__file__).read_text()).body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+    ]
+    reads_env = [
+        node.lineno for node in module_level_assignments
+        for sub in ast.walk(node)
+        if isinstance(sub, ast.Attribute) and sub.attr == "environ"
+    ]
+    assert not reads_env, f"os.environ read at import time on line(s) {reads_env}"
+
+
+def test_settings_defaults_when_nothing_is_configured(clean_env):
+    cfg = settings()
+    assert cfg.analyst_model == DEFAULT_ANALYST_MODEL
+    assert cfg.max_llm_calls == DEFAULT_MAX_LLM_CALLS
+    assert cfg.mcp_mode == "oss"
+    assert cfg.vertex_ready is False
+    assert cfg.grafana_ready is False
+
+
+# --------------------------------------------------------------------------- #
+# Individual knobs
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("12", 12),
+    (" 12 ", 12),
+    ("0", DEFAULT_MAX_LLM_CALLS),      # a ceiling of zero would block every run
+    ("-5", DEFAULT_MAX_LLM_CALLS),
+    ("", DEFAULT_MAX_LLM_CALLS),
+    ("many", DEFAULT_MAX_LLM_CALLS),
+    ("4.5", DEFAULT_MAX_LLM_CALLS),
+])
+def test_int_env_falls_back_rather_than_raising(monkeypatch, raw, expected):
+    monkeypatch.setenv("TURNAROUND_TEST_INT", raw)
+    assert _int_env("TURNAROUND_TEST_INT", DEFAULT_MAX_LLM_CALLS) == expected
+
+
+def test_an_empty_model_override_falls_back_to_the_default(clean_env, monkeypatch):
+    monkeypatch.setenv("TURNAROUND_GEMINI_MODEL", "   ")
+    assert settings().analyst_model == DEFAULT_ANALYST_MODEL
+
+
+@pytest.mark.parametrize("raw", ["hosted", "HOSTED", " Hosted "])
+def test_hosted_mode_is_matched_case_and_whitespace_insensitively(clean_env, monkeypatch, raw):
+    monkeypatch.setenv("TURNAROUND_MCP_MODE", raw)
+    cfg = settings()
+    assert cfg.mcp_mode == "hosted"
+    assert cfg.hosted_mcp is True
+
+
+@pytest.mark.parametrize("raw", ["oss", "", "gibberish"])
+def test_anything_that_is_not_hosted_is_oss(clean_env, monkeypatch, raw):
+    """Fail safe: an unrecognised mode must land on the read-only, unattended
+    path, never on the one with no ``--disable-write`` server behind it."""
+    monkeypatch.setenv("TURNAROUND_MCP_MODE", raw)
+    assert settings().mcp_mode == "oss"
+    assert settings().hosted_mcp is False
+
+
+def test_a_trailing_slash_on_the_grafana_url_is_removed(clean_env, monkeypatch):
+    """It is concatenated into API paths and an ``X-Grafana-URL`` header."""
+    monkeypatch.setenv("GRAFANA_URL", "https://stack.grafana.net/")
+    assert settings().grafana_url == "https://stack.grafana.net"
+
+
+def test_the_oauth_token_file_is_the_fallback_for_the_cloud_mcp_bearer(clean_env, monkeypatch):
+    token_file = clean_env / ".secrets" / "token"
+    token_file.parent.mkdir(parents=True)
+    token_file.write_text("  from-the-login-flow\n")
+    monkeypatch.setattr(config, "CLOUD_MCP_TOKEN_FILE", token_file)
+    assert settings().grafana_cloud_mcp_token == "from-the-login-flow"
+
+    monkeypatch.setenv("GRAFANA_CLOUD_MCP_TOKEN", "from-the-environment")
+    assert settings().grafana_cloud_mcp_token == "from-the-environment"
+
+
+def test_a_missing_token_file_is_an_empty_bearer_not_a_crash(clean_env):
+    assert settings().grafana_cloud_mcp_token == ""
+
+
+# --------------------------------------------------------------------------- #
+# Readiness + the mcp-grafana binary
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(("project", "url", "token", "vertex", "grafana"), [
+    ("proj", "https://s.net", "glsa_x", True, True),
+    ("", "https://s.net", "glsa_x", False, True),
+    ("proj", "", "glsa_x", True, False),
+    ("proj", "https://s.net", "", True, False),
+])
+def test_readiness_flags_are_honest(project, url, token, vertex, grafana):
+    """``/healthz`` publishes these; a false positive sends a reviewer hunting
+    inside a tool call for what is really a missing variable."""
+    cfg = Settings(grafana_url=url, grafana_token=token, gcp_project=project,
+                   gcp_location="us-central1", mcp_grafana_bin="mcp-grafana")
+    assert cfg.vertex_ready is vertex
+    assert cfg.grafana_ready is grafana
+
+
+def test_an_explicit_binary_override_wins_over_the_path(monkeypatch):
+    monkeypatch.setenv("TURNAROUND_MCP_GRAFANA_BIN", "/custom/mcp-grafana")
+    assert _find_mcp_grafana() == "/custom/mcp-grafana"
+
+
+def test_the_binary_falls_back_to_a_bare_name_so_the_error_names_it(monkeypatch):
+    """``uv run`` does not inherit shell PATH additions. When nothing is found,
+    return the bare name so the failure says ``mcp-grafana``, not ``None``."""
+    monkeypatch.delenv("TURNAROUND_MCP_GRAFANA_BIN", raising=False)
+    monkeypatch.setattr(config.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(config.Path, "is_file", lambda _self: False)
+    assert _find_mcp_grafana() == "mcp-grafana"
+
+
+# --------------------------------------------------------------------------- #
+# bootstrap_vertex
+# --------------------------------------------------------------------------- #
+
+
+def test_bootstrap_forces_vertex_and_never_offers_the_public_api(clean_env, monkeypatch):
+    """R4: the hackathon bars every non-Google runtime, and the public
+    Generative Language API is a different surface from Vertex."""
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "FALSE")
+    bootstrap_vertex()
+    # forced on even when the environment explicitly asked for the other path
+    assert os.environ["GOOGLE_GENAI_USE_VERTEXAI"] == "TRUE"
+
+    source = Path(config.__file__).read_text()
+    assert "GOOGLE_API_KEY" not in source
+    assert "GEMINI_API_KEY" not in source
+
+
+def test_bootstrap_defaults_the_location_but_respects_an_explicit_one(clean_env, monkeypatch):
+    assert bootstrap_vertex().gcp_location == "us-central1"
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+    assert bootstrap_vertex().gcp_location == "europe-west4"
+
+
+def test_a_relative_credentials_path_is_resolved_against_the_repo(clean_env, monkeypatch):
+    """``.env`` carries ``.secrets/sa.json``; the subprocess and the genai client
+    both run with a different cwd, so a relative path would not resolve."""
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", ".secrets/sa.json")
+    bootstrap_vertex()
+    resolved = Path(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
+    assert resolved.is_absolute()
+    assert resolved == clean_env / ".secrets" / "sa.json"
+
+
+def test_an_absolute_credentials_path_is_left_alone(clean_env, monkeypatch):
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/abs/sa.json")
+    bootstrap_vertex()
+    assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == "/abs/sa.json"

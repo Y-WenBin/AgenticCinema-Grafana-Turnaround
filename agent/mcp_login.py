@@ -3,7 +3,7 @@
     uv run python -m agent.mcp_login
 
 The hosted ``https://mcp.grafana.com/mcp`` endpoint is OAuth 2.1 only -- there is
-no service-account token (PROJECT.md section 2). This runs the interactive
+no service-account token (PROJECT.md, "Grafana MCP: two modes"). This runs the interactive
 Authorization Code + PKCE flow with dynamic client registration, using the
 ``mcp`` library's own OAuth client, and drops the resulting bearer token at
 ``.secrets/grafana-cloud-mcp-token`` so ``TURNAROUND_MCP_MODE=hosted`` runs pick

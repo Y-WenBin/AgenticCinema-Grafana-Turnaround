@@ -23,7 +23,7 @@ import os
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from opentelemetry.sdk.metrics.export import (
     AggregationTemporality,
@@ -67,7 +67,7 @@ class Point:
 
 
 def _ns(when: datetime) -> int:
-    return int(timewarp.apply(when).astimezone(timezone.utc).timestamp() * 1_000_000_000)
+    return int(timewarp.apply(when).astimezone(UTC).timestamp() * 1_000_000_000)
 
 
 def _label_key(labels: Mapping[str, str]) -> tuple[tuple[str, str], ...]:

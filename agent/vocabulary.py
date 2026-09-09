@@ -1,6 +1,6 @@
 """Production vocabulary, rendered for a Gemini prompt.
 
-The thesis (PROJECT.md section 1) is that the gap between Grafana and a studio is
+The thesis (PROJECT.md, "The problem") is that the gap between Grafana and a studio is
 *vocabulary*, not data. This module is where that gap is closed on the agent
 side: it turns :mod:`bridge.ontology` into prose and PromQL an analyst agent can
 act on, so the instruction text and the seeded series can never drift apart --

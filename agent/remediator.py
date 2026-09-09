@@ -16,9 +16,9 @@ from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
 
 from agent.approval import ApprovalGate
-from agent.config import ANALYST_MODEL, Settings
+from agent.config import Settings
 from agent.mcp_grafana import remediator_toolset
-from agent.timeline import ToolTimeline
+from agent.timeline import TimelineRecorder, ToolTimeline
 from agent.vocabulary import shared_context
 from agent.writeback import KitsuWriteBack, default_writeback, make_write_back_tool
 
@@ -66,33 +66,25 @@ def remediator(
     writeback: KitsuWriteBack | None = None,
 ) -> LlmAgent:
     wb_tool = FunctionTool(make_write_back_tool(writeback or default_writeback()))
-
-    pending: dict[int, object] = {}
+    recorder = TimelineRecorder(timeline, default_agent="remediator")
 
     def before_tool(tool, args, tool_context):
         """Timeline first (so a blocked call still shows), then the approval gate."""
-        pending[id(tool_context)] = timeline.begin(
-            agent=getattr(tool_context, "agent_name", "remediator"),
-            tool=getattr(tool, "name", str(tool)), args=args or {},
-        )
+        recorder.begin(tool, args, tool_context)
         blocked = gate.before_tool(tool, args, tool_context)
         if blocked is not None:
-            call = pending.pop(id(tool_context), None)
-            if call is not None:
-                timeline.finish(call, result=blocked, ok=False)
+            # Close the row here; the recorder then treats ADK's after-hook for
+            # this same blocked call as a no-op rather than a duplicate row.
+            recorder.finish(tool_context, blocked)
         return blocked
 
     def after_tool(tool, args, tool_context, tool_response):
         del tool, args
-        call = pending.pop(id(tool_context), None)
-        if call is not None:
-            ok = not (isinstance(tool_response, dict)
-                      and tool_response.get("status") == "blocked")
-            timeline.finish(call, result=tool_response, ok=ok)
+        recorder.finish(tool_context, tool_response)
 
     return LlmAgent(
         name="remediator",
-        model=ANALYST_MODEL,
+        model=cfg.analyst_model,
         description=("Proposes one upstream correction and, once a supervisor approves, "
                      "writes it to Grafana and back to Kitsu. All writes are gated."),
         instruction=(

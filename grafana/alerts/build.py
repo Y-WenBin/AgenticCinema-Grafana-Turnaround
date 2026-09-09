@@ -1,7 +1,7 @@
 """Build the Turnaround alert rules and write grafana/alerts/rules.json.
 
 Four rules, each carrying a *lever* in its annotations -- an alert with no
-attached remediation is just pressure (PROJECT.md section 7):
+attached remediation is just pressure (PROJECT.md, "Privacy model"):
 
 * two on the ``turnaround_*`` series (crew crunch, render waste);
 * two on the agent's own ``gen_ai.evaluation.result`` stream in Loki

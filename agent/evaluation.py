@@ -194,7 +194,14 @@ class LlmJudge:
         data = _parse_json_object(raw)
         out: list[EvalResult] = []
         for name in ("relevance", "hallucination", "task_completion"):
-            item = data.get(name) or {}
+            # Everything here comes from a model, so nothing about the shape is
+            # guaranteed: the key may be missing, hold a bare string instead of
+            # the {"score", "reason"} object, or carry a score of "high" or 7.
+            # Every one of those is a zero, never an exception -- a judge that
+            # raises would cost the run the answer it had already produced.
+            item = data.get(name)
+            if not isinstance(item, dict):
+                item = {}
             try:
                 score = max(0.0, min(1.0, float(item.get("score"))))
             except (TypeError, ValueError):

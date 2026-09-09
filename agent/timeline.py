@@ -1,6 +1,6 @@
 """A record of every tool call the agents make.
 
-The Phase 4 gate is "four demo questions answered cold, with a tool timeline
+The agent-tier gate is "four demo questions answered cold, with a tool timeline
 showing real MCP calls". This is that timeline: a small, ordered log that the
 ``before``/``after`` tool callbacks on each agent write to, so the console and
 the CLI can show *which agent called which Grafana MCP tool with what arguments*
@@ -80,6 +80,19 @@ class ToolCall:
         }
 
 
+def failed(response: object) -> bool:
+    """Did this tool response *not* complete?
+
+    Two shapes mean failure and they are the only two Turnaround produces: an
+    MCP error envelope (``isError``) from ``mcp-grafana``, and a call the
+    approval gate refused (``status: blocked``). One predicate so the analysts'
+    and the Remediator's timelines agree on what "ok" means.
+    """
+    return isinstance(response, dict) and bool(
+        response.get("isError") or response.get("status") == "blocked"
+    )
+
+
 @dataclass(slots=True)
 class ToolTimeline:
     calls: list[ToolCall] = field(default_factory=list)
@@ -124,3 +137,38 @@ class ToolTimeline:
         g = len(self.grafana_calls())
         rows.append(f"{len(self.calls)} tool calls, {g} against Grafana Cloud MCP (marked *)")
         return "\n".join(rows)
+
+
+@dataclass(slots=True)
+class TimelineRecorder:
+    """Pairs ADK's ``before_tool`` / ``after_tool`` callbacks onto one timeline.
+
+    ADK gives no call id linking a before to its after, but it hands the *same*
+    ``ToolContext`` instance to both and runs a turn's tool calls sequentially,
+    so keying the pending call on ``id(tool_context)`` is exact.
+
+    :meth:`finish` consumes the pending entry, which makes a second finish for
+    the same call a no-op. The Remediator relies on that: when the approval gate
+    blocks a write it finishes the call itself in the *before* hook, and ADK's
+    subsequent after-hook must not add a duplicate row. An after with no before
+    is likewise dropped rather than invented -- the timeline is evidence, and a
+    row with no arguments is worse than no row.
+    """
+
+    timeline: ToolTimeline
+    default_agent: str = "?"
+    _pending: dict[int, ToolCall] = field(default_factory=dict)
+
+    def begin(self, tool: object, args: dict | None, tool_context: object) -> ToolCall:
+        call = self.timeline.begin(
+            agent=getattr(tool_context, "agent_name", self.default_agent),
+            tool=getattr(tool, "name", str(tool)),
+            args=args or {},
+        )
+        self._pending[id(tool_context)] = call
+        return call
+
+    def finish(self, tool_context: object, response: object) -> None:
+        call = self._pending.pop(id(tool_context), None)
+        if call is not None:
+            self.timeline.finish(call, result=response, ok=not failed(response))

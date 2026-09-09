@@ -1,7 +1,7 @@
 """HTTP surface for the agent, for Cloud Run.
 
-``agent/run.py`` is the CLI; this is the same pipeline behind one endpoint so a
-demo (or a CI probe) can hit a URL:
+``agent/run.py`` is the CLI; this is the same pipeline (``agent/engine.py``)
+behind one endpoint so a demo (or a CI probe) can hit a URL:
 
     POST /ask   {"question": "why is SEQ0420 slipping?"}
       -> {"answer": "...", "timeline": [...], "evaluation": [...],
@@ -16,6 +16,9 @@ endpoint must never be able to mutate Kitsu or Grafana. Run the CLI with
 Self-instrumentation and the judge tier are on by default, same as the CLI, so a
 request produces its ``invoke_agent`` trace, token/latency histograms and
 ``gen_ai.evaluation.result`` events in the same Grafana Cloud stack.
+
+This module is the *JSON presentation* of a run. The run itself is
+``agent/engine.py``.
 """
 
 from __future__ import annotations
@@ -23,20 +26,12 @@ from __future__ import annotations
 import os
 
 from fastapi import FastAPI
-from google.adk.agents.invocation_context import LlmCallsLimitExceededError
-from google.adk.agents.run_config import RunConfig
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.genai import types
 from pydantic import BaseModel, Field
 
+from agent import engine
 from agent.approval import AutoApprover
-from agent.config import MAX_LLM_CALLS, bootstrap_vertex
-from agent.mcp_grafana import HostedMcpNotAuthorized
-from agent.producer import build_system
-from agent.run import _instrument, _llm_generate_or_none
-
-APP = "turnaround"
+from agent.config import settings as load_settings
+from agent.engine import HostedMcpNotAuthorized, NotConfigured
 
 app = FastAPI(title="Turnaround agent", version="0.1.0")
 
@@ -49,87 +44,47 @@ class AskRequest(BaseModel):
 
 @app.get("/healthz")
 def healthz() -> dict:
-    cfg = bootstrap_vertex()
+    cfg = load_settings()
     return {
         "status": "ok",
         "vertex_ready": cfg.vertex_ready,
         "grafana_ready": cfg.grafana_ready,
         "mcp_mode": cfg.mcp_mode,
-        "max_llm_calls": MAX_LLM_CALLS,
+        "max_llm_calls": cfg.max_llm_calls,
     }
 
 
 @app.post("/ask")
 async def ask_endpoint(req: AskRequest) -> dict:
-    cfg = bootstrap_vertex()
-    if not cfg.vertex_ready or not cfg.grafana_ready:
-        return {"error": "server not configured: GOOGLE_CLOUD_PROJECT and "
-                         "GRAFANA_URL / GRAFANA_SERVICE_ACCOUNT_TOKEN must be set"}
-
     try:
-        system = build_system(approver=AutoApprover(approve=False), settings=cfg)
-    except HostedMcpNotAuthorized as exc:
+        cfg = engine.resolved_settings()
+        outcome = await engine.answer_question(
+            req.question,
+            approver=AutoApprover(approve=False),
+            conversation_id="http",
+            settings=cfg,
+            observability=req.observability,
+            evaluate=req.evaluate,
+        )
+    except (NotConfigured, HostedMcpNotAuthorized) as exc:
         return {"error": str(exc)}
 
-    obs = _instrument(req.observability)
-    plugins = [obs.plugin] if obs is not None else None
-
-    sessions = InMemorySessionService()
-    await sessions.create_session(app_name=APP, user_id="supervisor", session_id="http")
-    runner = Runner(app_name=APP, agent=system.producer, session_service=sessions,
-                    plugins=plugins)
-    run_config = RunConfig(max_llm_calls=MAX_LLM_CALLS)
-
-    async def _drive() -> str:
-        answer = ""
-        async for event in runner.run_async(
-            user_id="supervisor", session_id="http",
-            new_message=types.Content(role="user", parts=[types.Part(text=req.question)]),
-            run_config=run_config,
-        ):
-            if event.is_final_response() and event.content and event.content.parts:
-                answer = "".join(p.text or "" for p in event.content.parts)
-        return answer
-
-    final, tripped = "", False
-    try:
-        if obs is not None:
-            with obs.telemetry.invoke_agent("producer", conversation_id="http"):
-                final = await _drive()
-        else:
-            final = await _drive()
-    except LlmCallsLimitExceededError:
-        tripped = True
-    finally:
-        if obs is not None:
-            obs.flush()
-
-    rid = obs.plugin.last_response_id if obs is not None else None
-    evaluation: list[dict] = []
-    if req.evaluate and final.strip():
-        from agent.evaluation import run_evaluation
-
-        scorecard = run_evaluation(
-            question=req.question, answer=final, timeline=system.timeline,
-            ledger=system.ledger, response_id=rid,
-            telemetry=obs.telemetry if obs is not None else None,
-            llm_generate=_llm_generate_or_none(req.evaluate),
-        )
-        if obs is not None:
-            obs.flush()
-        evaluation = [
+    scorecard = outcome.scorecard
+    return {
+        "answer": outcome.answer,
+        "timeline": outcome.system.timeline.as_dicts(),
+        "evaluation": [
             {"name": r.name, "score": r.score, "label": r.label,
              "actor_type": r.actor_type, "explanation": r.explanation}
-            for r in scorecard.results
-        ]
-
-    return {
-        "answer": final.strip(),
-        "timeline": system.timeline.as_dicts(),
-        "evaluation": evaluation,
-        "response_id": rid,
-        "circuit_breaker_tripped": tripped,
-        "grafana_url": cfg.grafana_url,
+            for r in (scorecard.results if scorecard is not None else [])
+        ],
+        "response_id": outcome.response_id,
+        "circuit_breaker_tripped": outcome.circuit_breaker_tripped,
+        # None when the run completed; otherwise why it stopped early. A Vertex
+        # quota refusal is a halt too, and it must not read as an empty answer.
+        "halted_by": outcome.halt.kind if outcome.halt is not None else None,
+        "halt_detail": outcome.halt.render() if outcome.halt is not None else "",
+        "grafana_url": outcome.settings.grafana_url,
     }
 
 

@@ -5,7 +5,7 @@ lookup table, reseeding duplicates every trace, and a scripted demo stops being
 reproducible. So stability is tested, not assumed.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -15,22 +15,22 @@ from bridge.emit import Emitter, StageEvent, trace_id_for_shot
 from bridge.ontology import Attr, Department, TaskStatus
 from bridge.privacy import PrivacyViolation
 
-START = datetime(2026, 9, 1, 9, 0, tzinfo=timezone.utc)
+START = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
 
 
 def stage(**overrides) -> StageEvent:
-    defaults = dict(
-        show="nightfall",
-        shot_id="SEQ0420_SH0100",
-        department=Department.COMP,
-        artist="a7f3c2d1",
-        vendor="vendor-b",
-        pool="comp-pool-2",
-        status=TaskStatus.WIP,
-        iteration=1,
-        started_at=START,
-        ended_at=START + timedelta(days=2),
-    )
+    defaults = {
+        "show": "nightfall",
+        "shot_id": "SEQ0420_SH0100",
+        "department": Department.COMP,
+        "artist": "a7f3c2d1",
+        "vendor": "vendor-b",
+        "pool": "comp-pool-2",
+        "status": TaskStatus.WIP,
+        "iteration": 1,
+        "started_at": START,
+        "ended_at": START + timedelta(days=2),
+    }
     return StageEvent(**{**defaults, **overrides})
 
 
@@ -106,7 +106,8 @@ class TestBackfilledTimestamps:
     def test_naive_timestamps_are_refused(self, emitter):
         # Production data crosses facilities; a naive timestamp is a silent bug.
         with pytest.raises(ValueError, match="timezone-aware"):
-            emitter.emit_stage(stage(started_at=datetime(2026, 9, 1, 9, 0)))
+            # naive on purpose: this is the value the emitter must refuse
+            emitter.emit_stage(stage(started_at=datetime(2026, 9, 1, 9, 0)))  # noqa: DTZ001
 
     def test_backwards_window_is_refused(self):
         with pytest.raises(ValueError, match="ends before it starts"):
