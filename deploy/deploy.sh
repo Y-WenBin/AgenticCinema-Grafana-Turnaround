@@ -170,6 +170,7 @@ echo
 echo "deployed: $URL"
 echo "re-seeding every ${SEED_EVERY_MIN} minutes via Cloud Scheduler job '$SCHED'"
 echo "smoke test:"
-echo "  curl -s $URL/healthz | jq"
+# /health, not /healthz: GFE intercepts the exact path /healthz on *.run.app.
+echo "  curl -s $URL/health | jq"
 echo "  curl -s -H 'content-type: application/json' \\"
 echo "    -d '{\"question\":\"why is SEQ0420 slipping and what is it costing?\"}' $URL/ask | jq"
