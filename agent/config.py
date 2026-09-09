@@ -46,16 +46,23 @@ def load_env(path: Path | None = None) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Models
+# Defaults every knob falls back to
 # --------------------------------------------------------------------------- #
 
-#: Everything runs on flash by default. The coordinator does more planning and
-#: would benefit from pro, but this hackathon project's Vertex quota for
-#: ``gemini-2.5-pro`` is effectively zero (429 RESOURCE_EXHAUSTED on the first
-#: call), and the analysts fan out concurrently, so flash-everywhere is what
-#: actually runs. Set TURNAROUND_GEMINI_MODEL_PRO to opt the Producer up.
-ANALYST_MODEL = os.environ.get("TURNAROUND_GEMINI_MODEL", "gemini-2.5-flash")
-PRODUCER_MODEL = os.environ.get("TURNAROUND_GEMINI_MODEL_PRO", ANALYST_MODEL)
+#: Everything runs on flash. The coordinator does more planning and would
+#: benefit from pro, but this project's Vertex quota for ``gemini-2.5-pro`` is
+#: effectively zero (429 RESOURCE_EXHAUSTED on the first call), so
+#: flash-everywhere is what actually runs. Override with
+#: ``TURNAROUND_GEMINI_MODEL`` (Gemini on Vertex only -- see the module docstring).
+DEFAULT_ANALYST_MODEL = "gemini-2.5-flash"
+
+#: Circuit breaker for a run: the ceiling on Gemini calls across the whole
+#: pipeline, passed to ADK's ``RunConfig(max_llm_calls=...)``. The five-step
+#: deterministic pipeline needs ~30 in the worst honest case (each analyst may
+#: retry a query once); ADK's own default is 500, high enough for a stuck
+#: tool-retry loop to burn real money before anything stops it. Override with
+#: ``TURNAROUND_MAX_LLM_CALLS`` for a legitimately longer run.
+DEFAULT_MAX_LLM_CALLS = 40
 
 
 def _int_env(name: str, default: int) -> int:
@@ -64,15 +71,6 @@ def _int_env(name: str, default: int) -> int:
         return value if value > 0 else default
     except (TypeError, ValueError):
         return default
-
-
-#: Circuit breaker for a run: the ceiling on Gemini calls across the whole
-#: pipeline, passed to ADK's ``RunConfig(max_llm_calls=...)``. The five-step
-#: deterministic pipeline needs ~30 in the worst honest case (each analyst may
-#: retry a query once); ADK's own default is 500, high enough for a stuck
-#: tool-retry loop to burn real money before anything stops it. Override with
-#: ``TURNAROUND_MAX_LLM_CALLS`` for a legitimately longer run.
-MAX_LLM_CALLS = _int_env("TURNAROUND_MAX_LLM_CALLS", 40)
 
 
 # --------------------------------------------------------------------------- #
@@ -91,12 +89,19 @@ MAX_LLM_CALLS = _int_env("TURNAROUND_MAX_LLM_CALLS", 40)
 #:             opt-in mode that exercises the interactive-authorization flow the
 #:             proposal calls for. Read-only is then enforced by ``tool_filter``
 #:             plus the approval gate, not by a flag.
-MCP_MODE = os.environ.get("TURNAROUND_MCP_MODE", "oss").strip().lower()
 HOSTED_MCP_URL = "https://mcp.grafana.com/mcp"
 
 
 @dataclass(frozen=True, slots=True)
 class Settings:
+    """Every runtime knob, resolved once, after ``.env`` has been loaded.
+
+    This is the only place the rest of the agent tier reads configuration from.
+    There are deliberately no module-level constants holding an env var: those
+    freeze at import time, which is *before* :func:`load_env` runs, so a value
+    set only in ``.env`` would be silently ignored.
+    """
+
     grafana_url: str
     grafana_token: str
     gcp_project: str
@@ -107,6 +112,10 @@ class Settings:
     ds_prom: str = "grafanacloud-prom"
     ds_loki: str = "grafanacloud-logs"
     ds_tempo: str = "grafanacloud-traces"
+    #: the one Gemini model every agent and the LLM judge run on
+    analyst_model: str = DEFAULT_ANALYST_MODEL
+    #: per-run ceiling on Gemini calls (the circuit breaker)
+    max_llm_calls: int = DEFAULT_MAX_LLM_CALLS
 
     @property
     def grafana_ready(self) -> bool:
@@ -142,20 +151,25 @@ def _find_mcp_grafana() -> str:
 
 
 def settings() -> Settings:
+    """Resolve every knob from ``.env`` + the real environment. Call this, not
+    ``os.environ``, from anywhere in ``agent/``."""
     load_env()
+    mode = os.environ.get("TURNAROUND_MCP_MODE", "oss").strip().lower()
     return Settings(
         grafana_url=os.environ.get("GRAFANA_URL", "").rstrip("/"),
         grafana_token=os.environ.get("GRAFANA_SERVICE_ACCOUNT_TOKEN", ""),
         gcp_project=os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
         gcp_location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"),
         mcp_grafana_bin=_find_mcp_grafana(),
-        mcp_mode="hosted" if os.environ.get("TURNAROUND_MCP_MODE", "oss").strip().lower()
-        == "hosted" else "oss",
+        mcp_mode="hosted" if mode == "hosted" else "oss",
         grafana_cloud_mcp_token=os.environ.get("GRAFANA_CLOUD_MCP_TOKEN", "")
         or _read_token_file(),
         ds_prom=os.environ.get("GRAFANA_DS_PROM_UID", "grafanacloud-prom"),
         ds_loki=os.environ.get("GRAFANA_DS_LOKI_UID", "grafanacloud-logs"),
         ds_tempo=os.environ.get("GRAFANA_DS_TEMPO_UID", "grafanacloud-traces"),
+        analyst_model=os.environ.get("TURNAROUND_GEMINI_MODEL", "").strip()
+        or DEFAULT_ANALYST_MODEL,
+        max_llm_calls=_int_env("TURNAROUND_MAX_LLM_CALLS", DEFAULT_MAX_LLM_CALLS),
     )
 
 

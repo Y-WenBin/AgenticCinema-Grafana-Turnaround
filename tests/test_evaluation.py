@@ -4,11 +4,14 @@ with a stubbed model, and the ``gen_ai.evaluation.result`` emission path.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agent.evaluation import (
     DeterministicJudge,
     LlmJudge,
+    _label_for,
     run_evaluation,
     vertex_generator,
 )
@@ -169,3 +172,98 @@ def test_vertex_generator_is_lazy_and_does_not_touch_the_network_on_import():
     # If credentials are absent this raises; that is acceptable -- the point is
     # that importing agent.evaluation does not.
     assert callable(vertex_generator)
+
+
+# --------------------------------------------------------------------------- #
+# LLM-judge robustness: the scores come from a model, so nothing about them is
+# guaranteed. A malformed reply must degrade to a low score, never to a crash
+# that loses the run's answer.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(("raw_score", "expected"), [
+    (1.0, 1.0),
+    (0.0, 0.0),
+    (0.55, 0.55),
+    ("0.9", 0.9),        # models routinely return the number as a string
+    (7, 1.0),            # clamped: a judge that "scores out of 10"
+    (-3, 0.0),
+    (None, 0.0),
+    ("high", 0.0),
+    ([], 0.0),
+])
+def test_llm_judge_clamps_and_coerces_whatever_the_model_returns(raw_score, expected):
+    payload = json.dumps({
+        "relevance": {"score": raw_score, "reason": "r"},
+        "hallucination": {"score": raw_score, "reason": "r"},
+        "task_completion": {"score": raw_score, "reason": "r"},
+    })
+    results = LlmJudge(lambda _p: payload).judge(
+        question="q", answer="a", timeline_digest="")
+    assert [r.score for r in results] == [expected] * 3
+
+
+@pytest.mark.parametrize(("score", "label"), [
+    (1.0, "pass"), (0.7, "pass"), (0.69, "borderline"),
+    (0.4, "borderline"), (0.39, "fail"), (0.0, "fail"),
+])
+def test_label_thresholds_are_the_ones_the_alert_rules_assume(score, label):
+    """``turnaround-evalops`` alerts on the label, not the number."""
+    assert _label_for(score) == label
+
+
+@pytest.mark.parametrize("raw", [
+    "",
+    "I could not evaluate this.",
+    "[1, 2, 3]",                      # valid JSON, wrong shape
+    '{"relevance": "very good"}',     # right key, wrong value shape
+    "```json\n{not: json}\n```",
+])
+def test_a_malformed_judge_reply_scores_zero_rather_than_raising(raw):
+    results = LlmJudge(lambda _p: raw).judge(question="q", answer="a", timeline_digest="")
+    assert [r.name for r in results] == ["relevance", "hallucination", "task_completion"]
+    assert all(r.score == 0.0 and r.label == "fail" for r in results)
+
+
+def test_a_judge_that_raises_becomes_one_failed_check_not_a_lost_answer():
+    """The judge runs after the answer exists. Losing the answer to a judge
+    failure would be the worst possible trade."""
+    def _explode(_prompt):
+        raise RuntimeError("Vertex 503")
+
+    card = run_evaluation(question="q", answer="SEQ0420 waste 40 core-h, 4.5x",
+                          timeline=_FakeTimeline(), response_id=None,
+                          llm_generate=_explode)
+    names = [r.name for r in card.results]
+    assert "llm_judge_error" in names
+    assert "grounding_numbers" in names  # the deterministic tier still ran
+
+
+def test_the_prompt_shown_to_the_judge_carries_the_evidence_it_scores_against():
+    """A judge asked to rate 'hallucination' without the tool timeline is just
+    guessing; the timeline is what makes the score meaningful."""
+    seen = {}
+
+    def _capture(prompt):
+        seen["prompt"] = prompt
+        return '{"relevance":{"score":1,"reason":""},' \
+               '"hallucination":{"score":1,"reason":""},' \
+               '"task_completion":{"score":1,"reason":""}}'
+
+    LlmJudge(_capture).judge(question="why is SEQ0420 slipping?",
+                             answer="because of the cache",
+                             timeline_digest="[grafana] farm_analyst.query_prometheus ok=True sum(x)")
+    prompt = seen["prompt"]
+    assert "why is SEQ0420 slipping?" in prompt
+    assert "because of the cache" in prompt
+    assert "query_prometheus" in prompt
+    assert "Never reproduce a person's name or a pool name" in prompt
+
+
+def test_an_explanation_from_a_model_is_truncated_before_it_ships():
+    """It becomes a Loki log body on every run; an unbounded model string is a
+    cost and a cardinality risk."""
+    payload = json.dumps({name: {"score": 0.5, "reason": "x" * 5000}
+                          for name in ("relevance", "hallucination", "task_completion")})
+    results = LlmJudge(lambda _p: payload).judge(question="q", answer="a", timeline_digest="")
+    assert all(len(r.explanation) <= 400 for r in results)

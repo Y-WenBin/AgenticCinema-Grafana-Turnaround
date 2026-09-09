@@ -26,9 +26,14 @@ from observability.adk import GenAiObservabilityPlugin
 from observability.genai import GenAiTelemetry
 from observability.providers import DEFAULT_SERVICE_NAME, build_providers
 
-__all__ = ["GenAiObservabilityPlugin", "GenAiTelemetry", "Instrumentation", "instrument"]
+__all__ = ["TURNAROUND_GUARD", "GenAiObservabilityPlugin", "GenAiTelemetry",
+           "Instrumentation", "instrument"]
 
 _CAPTURE_ENV = "TURNAROUND_CAPTURE_CONTENT"
+
+#: sentinel for "use Turnaround's own PII guard"; pass an explicit callable to
+#: substitute one, or ``None`` to run with no guard at all
+TURNAROUND_GUARD = object()
 
 
 @dataclass(slots=True)
@@ -57,7 +62,7 @@ def instrument(
     *,
     service_name: str = DEFAULT_SERVICE_NAME,
     capture_content: bool | None = None,
-    content_guard=_default_guard,
+    content_guard=TURNAROUND_GUARD,
     resource_attributes: dict[str, str] | None = None,
 ) -> Instrumentation:
     """Stand up the GenAI telemetry and its ADK plugin against the OTLP gateway.
@@ -70,8 +75,7 @@ def instrument(
     """
     if capture_content is None:
         capture_content = os.environ.get(_CAPTURE_ENV, "").lower() in ("1", "true", "yes")
-    guard = content_guard() if callable(content_guard) and content_guard is _default_guard \
-        else content_guard
+    guard = _default_guard() if content_guard is TURNAROUND_GUARD else content_guard
 
     providers = build_providers(service_name=service_name,
                                 resource_attributes=resource_attributes)

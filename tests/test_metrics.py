@@ -1,7 +1,7 @@
 """Backfilled metrics look plausible even when they are wrong, so the
 accumulation and the label rules are tested directly."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from opentelemetry.sdk.metrics.export import AggregationTemporality, Gauge, Sum
@@ -11,7 +11,7 @@ from bridge.ontology import Attr
 from bridge.privacy import PrivacyViolation
 from bridge.testing import CollectingMetricExporter
 
-T0 = datetime(2026, 8, 1, tzinfo=timezone.utc)
+T0 = datetime(2026, 8, 1, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -96,7 +96,8 @@ class TestGauge:
 
     def test_naive_timestamps_are_refused(self):
         with pytest.raises(ValueError, match="timezone-aware"):
-            Point(datetime(2026, 8, 1), 1.0, {})
+            # naive on purpose: this is the value Point must refuse
+            Point(datetime(2026, 8, 1), 1.0, {})  # noqa: DTZ001
 
 
 class TestNoPerPersonSeries:

@@ -2,9 +2,9 @@
 
 The Remediator's job ends with a change proposed back into the *production*
 tool, not just a note in Grafana: a comment on the task, or a suggested status.
-There is no live Kitsu in this environment (PROJECT.md section 9 -- no container
-runtime), so the real ``gazu`` path sits behind a Protocol and a recording
-implementation stands in. The recorder does two useful things:
+There is no live Kitsu in this environment (PROJECT.md, "Deferred by decision"
+-- no container runtime), so the real ``gazu`` path sits behind a Protocol and a
+recording implementation stands in. The recorder does two useful things:
 
 * appends every write to ``agent/_writeback.jsonl`` (gitignored) as an audit log;
 * drops a Grafana annotation so the write-back is visible on the same

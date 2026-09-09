@@ -8,7 +8,7 @@ crunch mechanism, or losing the OpenCue join all fail loudly.
 
 import statistics
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -16,7 +16,7 @@ from bridge.ontology import Department, TaskStatus, parse_opencue_job_name
 from bridge.privacy import MIN_POOL_SIZE, may_report_crew_load
 from seed.model import ShowSimulation
 
-NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 6, tzinfo=UTC)
 ACT_THREE = "SEQ0420"
 
 

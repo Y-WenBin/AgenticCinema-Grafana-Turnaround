@@ -21,7 +21,7 @@ from __future__ import annotations
 import random
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -137,7 +137,7 @@ class ShowSimulation:
         self.seed: int = show["seed"]
         # Everything after `now` is the future and must not exist yet: a demo
         # that shows completed work in the future is instantly unconvincing.
-        self.now = now or datetime.now(timezone.utc)
+        self.now = now or datetime.now(UTC)
         # Anchored to `now` rather than to fixed dates, so the show is always
         # mid-flight whenever it is seeded.
         self.start = _midnight(
@@ -150,7 +150,7 @@ class ShowSimulation:
         self._next_artist: dict[str, int] = defaultdict(int)
 
     @classmethod
-    def load(cls, path: Path = SHOW_FILE, *, now: datetime | None = None) -> "ShowSimulation":
+    def load(cls, path: Path = SHOW_FILE, *, now: datetime | None = None) -> ShowSimulation:
         return cls(yaml.safe_load(path.read_text()), now=now)
 
     # -- setup ------------------------------------------------------------
@@ -411,4 +411,4 @@ class ShowSimulation:
 
 
 def _midnight(day: date) -> datetime:
-    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+    return datetime(day.year, day.month, day.day, tzinfo=UTC)

@@ -1,6 +1,6 @@
 """ADK plugin: agent lifecycle callbacks -> ``gen_ai.*`` telemetry.
 
-Attached once on the ``Runner`` (``agent/run.py``); needs no per-agent wiring and
+Attached once on the ``Runner`` (``agent/engine.py``); needs no per-agent wiring and
 survives new sub-agents being added to the pipeline.
 
 Two facts about ADK 2.8 shape this:
@@ -9,10 +9,11 @@ Two facts about ADK 2.8 shape this:
   ``callback_context`` objects, so a span cannot be paired across them by object
   identity. But Turnaround's pipeline is a ``SequentialAgent`` and ADK does not
   run a turn's tool calls concurrently, so model and tool calls form one
-  strictly sequential stream -- a stack pairs before/after with no keys.
+  strictly sequential stream -- a stack pairs the model calls with no keys. Tool
+  calls do get one shared ``ToolContext``, so those pair on its identity.
 * Doing ``opentelemetry.context.attach``/``detach`` across two callbacks fails
   (they run in different async contexts). So the ``invoke_agent`` root span is
-  opened by ``agent/run.py`` around the whole run instead, and the ``chat`` and
+  opened by ``agent/engine.py`` around the whole run instead, and the ``chat`` and
   ``execute_tool`` spans nest under it through the normal current-span context.
 
 ``agent/timeline.py`` still keeps its own in-process log in parallel -- that is
@@ -66,8 +67,10 @@ class GenAiObservabilityPlugin(BasePlugin):
         #: by the judge tier so a low eval score in Loki pivots to this trace
         self.run_id: str = new_response_id()
         self._chat_stack: list[tuple[Any, float, str | None, str | None]] = []
-        self._tools: dict[int, Any] = {}
-        self._tool_stack: list[Any] = []
+        #: open execute_tool spans, keyed on the ToolContext ADK hands to both
+        #: the before and after hooks for one call (unlike the model hooks,
+        #: which get different context objects -- hence the stack above)
+        self._tools: dict[int, tuple[Any, Any]] = {}
 
     @property
     def last_response_id(self) -> str:
@@ -115,35 +118,26 @@ class GenAiObservabilityPlugin(BasePlugin):
         call_id = getattr(tool_context, "function_call_id", None)
         query, lang = _extract_query(tool_args or {})
         cm = self._t.execute_tool(tool_name=name, call_id=call_id, query=query, query_lang=lang)
-        span = cm.__enter__()
-        self._tools[id(tool_context)] = (cm, span)
-        self._tool_stack.append((cm, span))
+        self._tools[id(tool_context)] = (cm, cm.__enter__())
 
     async def after_tool_callback(self, *, tool: Any, tool_args: dict[str, Any],
                                   tool_context: Any, result: Any) -> None:
-        entry = self._tools.pop(id(tool_context), None) or (
-            self._tool_stack.pop() if self._tool_stack else None)
+        entry = self._tools.pop(id(tool_context), None)
         if entry is None:
             return
         cm, span = entry
         if isinstance(result, dict) and (result.get("isError") or result.get("status") == "blocked"):
             span.set_status(Status(StatusCode.ERROR, "tool did not complete"))
         cm.__exit__(None, None, None)
-        self._forget(span)
 
     async def on_tool_error_callback(self, *, tool: Any, tool_args: dict[str, Any],
                                      tool_context: Any, error: Exception) -> None:
-        entry = self._tools.pop(id(tool_context), None) or (
-            self._tool_stack.pop() if self._tool_stack else None)
+        entry = self._tools.pop(id(tool_context), None)
         if entry is None:
             return
         cm, span = entry
         span.set_status(Status(StatusCode.ERROR, str(error)))
         cm.__exit__(type(error), error, error.__traceback__)
-        self._forget(span)
-
-    def _forget(self, span: Any) -> None:
-        self._tool_stack[:] = [e for e in self._tool_stack if e[1] is not span]
 
 
 def _outcome_from_response(llm_response: Any, *, capture: bool) -> ChatOutcome:

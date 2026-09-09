@@ -76,6 +76,8 @@ def build_providers(
     Pass no exporters for the real OTLP path (``OTEL_EXPORTER_OTLP_ENDPOINT``
     must be set, same as the bridge). Pass exporters or a ``metric_reader`` for
     tests -- processors then run synchronously so a caller can assert on output.
+    Injecting some but not all is fine: the signals you did not wire are simply
+    discarded.
     """
     real_otlp = span_exporter is None and log_exporter is None and metric_exporter is None \
         and metric_reader is None
@@ -97,11 +99,15 @@ def build_providers(
         log_exporter = OTLPLogExporter()
         metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter())
 
+    # Each signal is wired independently: a caller that injects only a span
+    # exporter gets a working tracer and two providers that quietly discard,
+    # rather than an AttributeError from deep inside an exporter built on None.
     tp = TracerProvider(resource=resource)
-    tp.add_span_processor(
-        BatchSpanProcessor(span_exporter) if real_otlp
-        else SimpleSpanProcessor(span_exporter)
-    )
+    if span_exporter is not None:
+        tp.add_span_processor(
+            BatchSpanProcessor(span_exporter) if real_otlp
+            else SimpleSpanProcessor(span_exporter)
+        )
 
     lp = LoggerProvider(resource=resource)
     if log_exporter is not None:
@@ -110,8 +116,10 @@ def build_providers(
             else SimpleLogRecordProcessor(log_exporter)
         )
 
-    if metric_reader is None:
+    if metric_reader is None and metric_exporter is not None:
         metric_reader = PeriodicExportingMetricReader(metric_exporter)
-    mp = MeterProvider(resource=resource, metric_readers=[metric_reader], views=_histogram_views())
+    mp = MeterProvider(resource=resource,
+                       metric_readers=[metric_reader] if metric_reader is not None else [],
+                       views=_histogram_views())
 
     return Providers(tracer_provider=tp, logger_provider=lp, meter_provider=mp)

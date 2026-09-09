@@ -14,9 +14,9 @@ from __future__ import annotations
 from google.adk.agents import LlmAgent
 
 from agent.approval import EvidenceLedger
-from agent.config import ANALYST_MODEL, Settings
+from agent.config import Settings
 from agent.mcp_grafana import CRUNCH_TOOLS, FARM_TOOLS, SCHEDULE_TOOLS, analyst_toolset
-from agent.timeline import ToolTimeline
+from agent.timeline import TimelineRecorder, ToolTimeline
 from agent.vocabulary import FLOOR, shared_context
 
 # --------------------------------------------------------------------------- #
@@ -25,32 +25,19 @@ from agent.vocabulary import FLOOR, shared_context
 
 
 def timeline_callbacks(timeline: ToolTimeline):
-    """A (before, after) callback pair that logs each tool call to ``timeline``.
+    """A (before, after) ADK callback pair that logs each tool call to ``timeline``.
 
-    ADK gives no call id linking a before to its after, but it passes the *same*
-    ``ToolContext`` instance to both and runs a turn's tool calls sequentially,
-    so keying pending calls on ``id(tool_context)`` is safe here.
+    Both return ``None``: the before lets the call proceed, the after keeps the
+    tool response as-is. The pairing rules live in :class:`TimelineRecorder`.
     """
-    pending: dict[int, object] = {}
+    recorder = TimelineRecorder(timeline)
 
     def before(tool, args, tool_context):
-        """ADK before_tool_callback. Returns None to let the call proceed."""
-        agent = getattr(tool_context, "agent_name", "?")
-        pending[id(tool_context)] = timeline.begin(
-            agent=agent, tool=getattr(tool, "name", str(tool)), args=args or {},
-        )
+        recorder.begin(tool, args, tool_context)
 
     def after(tool, args, tool_context, tool_response):
-        """ADK after_tool_callback. Returns None to keep the tool response as-is."""
-        del args
-        call = pending.pop(id(tool_context), None)
-        if call is None:
-            call = timeline.begin(
-                agent=getattr(tool_context, "agent_name", "?"),
-                tool=getattr(tool, "name", str(tool)), args={},
-            )
-        ok = not (isinstance(tool_response, dict) and tool_response.get("isError"))
-        timeline.finish(call, result=tool_response, ok=ok)
+        del tool, args
+        recorder.finish(tool_context, tool_response)
 
     return before, after
 
@@ -75,7 +62,7 @@ def _analyst(*, name: str, description: str, role: str, tool_filter, cfg: Settin
     context = shared_context(cfg.ds_prom, cfg.ds_loki, cfg.ds_tempo)
     return LlmAgent(
         name=name,
-        model=ANALYST_MODEL,
+        model=cfg.analyst_model,
         description=description,
         instruction=f"{context}\n\n---\n\nYOUR ROLE\n{role}",
         tools=[analyst_toolset(cfg, tool_filter)],

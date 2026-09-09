@@ -143,7 +143,7 @@ def _run(coro):
 
 
 def test_plugin_builds_a_nested_trace_from_adk_callbacks():
-    """invoke_agent is opened by the caller (agent/run.py); the plugin's chat
+    """invoke_agent is opened by the caller (agent/engine.py); the plugin's chat
     and execute_tool spans nest under it. before/after get different context
     objects -- the plugin pairs them on a stack, not by identity."""
     h = make_harness()

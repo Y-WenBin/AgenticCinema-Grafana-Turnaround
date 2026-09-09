@@ -12,13 +12,16 @@ deterministic instead of model-decided:
       5. synthesis          -> the final Answer / Evidence / Remediation block
 
 Every question runs the whole board. It costs a few extra flash calls per run
-and buys a demo that behaves the same way every take (PROJECT.md section 13,
+and buys a demo that behaves the same way every take (PROJECT.md, "Risks",
 "agent non-determinism on camera"). The evidence ledger the approval gate shows
 is filled by each analyst's ``after_agent_callback``, not by a coordinator
 remembering to call a tool.
 
 ``build_system`` returns the root agent plus the shared timeline, gate and
 ledger for the CLI, the Phase 5 console and the tests.
+
+``SYNTHESIS_ROLE`` interpolates the four ``output_key`` names the sub-agents
+write to; ``tests/test_agent_build.py`` asserts they still match.
 """
 
 from __future__ import annotations
@@ -29,8 +32,8 @@ from google.adk.agents import LlmAgent, SequentialAgent
 
 from agent.analysts import crunch_guardian, farm_analyst, schedule_analyst
 from agent.approval import ApprovalGate, Approver, AutoApprover, EvidenceLedger
-from agent.config import ANALYST_MODEL, Settings, bootstrap_vertex
-from agent.remediator import REMEDIATION_KEY, remediator
+from agent.config import Settings, bootstrap_vertex
+from agent.remediator import remediator
 from agent.timeline import ToolTimeline
 from agent.writeback import KitsuWriteBack
 
@@ -97,7 +100,7 @@ def build_system(
 
     synthesis = LlmAgent(
         name="synthesis",
-        model=ANALYST_MODEL,
+        model=cfg.analyst_model,
         description="Writes the final Answer / Evidence / Remediation block from the specialists' outputs.",
         instruction=SYNTHESIS_ROLE,
     )
@@ -124,6 +127,3 @@ def __getattr__(name: str):
     if name == "root_agent":
         return build_system().producer
     raise AttributeError(name)
-
-
-assert REMEDIATION_KEY == "remediation_result"  # instruction template above depends on it

@@ -27,9 +27,10 @@ import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from opentelemetry import trace
+from opentelemetry._logs import SeverityNumber
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs._internal import LogRecord
@@ -38,7 +39,6 @@ from opentelemetry.sdk._logs.export import (
     LogExporter,
     SimpleLogRecordProcessor,
 )
-from opentelemetry._logs import SeverityNumber
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
@@ -127,7 +127,7 @@ def _ns(when: datetime) -> int:
     if when.tzinfo is None:
         raise ValueError("timestamps must be timezone-aware; production data crosses facilities")
     when = timewarp.apply(when)
-    return int(when.astimezone(timezone.utc).timestamp() * 1_000_000_000)
+    return int(when.astimezone(UTC).timestamp() * 1_000_000_000)
 
 
 @dataclass(frozen=True, slots=True)
