@@ -2,7 +2,8 @@
 # Deploy Turnaround to Cloud Run: the agent service + the re-seed job that keeps
 # the demo data alive.
 #
-#   PROJECT_ID=my-proj REGION=us-central1 ./deploy/deploy.sh
+#   ./deploy/deploy.sh                       # project from GOOGLE_CLOUD_PROJECT in .env
+#   PROJECT_ID=other-proj ./deploy/deploy.sh # or override it
 #
 # Reads runtime configuration from ./.env (same file the CLI uses). Vertex auth
 # is the Cloud Run service account's ADC — this script grants it
@@ -13,7 +14,6 @@
 # file) and reused by both the service and the job, so they can never drift.
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:?set PROJECT_ID}"
 REGION="${REGION:-us-central1}"
 SERVICE="${SERVICE:-turnaround-agent}"
 SEED_JOB="${SEED_JOB:-turnaround-seed}"
@@ -35,6 +35,14 @@ need GRAFANA_SERVICE_ACCOUNT_TOKEN
 need OTEL_EXPORTER_OTLP_ENDPOINT
 need OTEL_EXPORTER_OTLP_HEADERS
 need TURNAROUND_PSEUDONYM_SALT
+
+# Resolved after `.env` is sourced, not before: the project id is already in
+# there as GOOGLE_CLOUD_PROJECT, and demanding a second name for the same value
+# is a trip hazard for anyone whose .env is complete. An explicit PROJECT_ID
+# still wins, for deploying to a project other than the one the CLI talks to.
+PROJECT_ID="${PROJECT_ID:-${GOOGLE_CLOUD_PROJECT:-}}"
+[[ -n "$PROJECT_ID" ]] || {
+  echo "set PROJECT_ID, or GOOGLE_CLOUD_PROJECT in $ENV_FILE" >&2; exit 1; }
 
 echo "==> project=$PROJECT_ID region=$REGION service=$SERVICE job=$SEED_JOB"
 gcloud config set project "$PROJECT_ID" >/dev/null

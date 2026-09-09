@@ -376,7 +376,7 @@ work unchanged** — that's the point of the relabel.
 Needs `gcloud` installed and authenticated.
 
 ```bash
-PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1 ./deploy/deploy.sh
+./deploy/deploy.sh          # project from GOOGLE_CLOUD_PROJECT in .env
 ```
 
 It enables APIs, makes a least-privilege runtime service account

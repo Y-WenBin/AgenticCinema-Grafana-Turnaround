@@ -37,8 +37,11 @@ pins it.
 ## Deploy
 
 ```bash
-PROJECT_ID=your-gcp-project REGION=us-central1 ./deploy/deploy.sh
+./deploy/deploy.sh
 ```
+
+The project comes from `GOOGLE_CLOUD_PROJECT` in your `.env`; set
+`PROJECT_ID=other-proj` (and `REGION=`) to override either.
 
 This deploys **two** workloads from one image:
 

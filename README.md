@@ -112,7 +112,9 @@ Analysts are read-only *by construction*, not by prompt — they are wired to an
 
 ## Try it
 
-The agent is live on Cloud Run. No auth, nothing to install:
+The agent is live on Cloud Run. No auth, nothing to install — open
+[the URL](https://turnaround-agent-b465d3vxhq-uc.a.run.app) in a browser for
+the endpoint list, or go straight at it:
 
 ```bash
 curl -s https://turnaround-agent-b465d3vxhq-uc.a.run.app/health
