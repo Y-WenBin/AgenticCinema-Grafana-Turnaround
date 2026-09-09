@@ -20,7 +20,7 @@ record — including every bug found on the way — is
 
 **Status.** Data plane, dashboards/alerts/ML, the agent tier, the EvalOps tier
 and the deploy scaffolding are complete and tested. All four demo questions are
-verified cold against the live stack. **364 tests**, offline; `ruff` clean. The
+verified cold against the live stack. **387 tests**, offline; `ruff` clean. The
 Cloud Run *deploy run* and a live Kitsu/OpenCue instance are the two open items
 (see [Roadmap](#roadmap)). Grafana Cloud stack `your-stack`
 (`prod-ap-southeast-1`); Vertex AI `gemini-2.5-flash`.
@@ -200,7 +200,8 @@ Line counts are indicative, not maintained to the digit.
 | [`config.py`](agent/config.py) | 201 | `.env` loading, Vertex bootstrap, `Settings` — the only channel for runtime configuration |
 | [`timeline.py`](agent/timeline.py) | 174 | `ToolTimeline` + `TimelineRecorder`: every tool call, Grafana ones marked. The demo's evidence |
 | [`run.py`](agent/run.py) | 114 | CLI presentation: console text + exit code |
-| [`serve.py`](agent/serve.py) | 98 | HTTP presentation: `POST /ask`, `GET /healthz` |
+| [`serve.py`](agent/serve.py) | 205 | HTTP presentation: the playground at `/`, `POST /ask`, `GET /health` |
+| [`limits.py`](agent/limits.py) | 211 | Guardrails for the public endpoint: per-visitor window, daily budget, concurrency |
 
 ### `observability/` — the agent watching itself
 
@@ -396,7 +397,7 @@ punchline. The real story is stronger.
 ```bash
 uv sync --group dev
 brew install mcp-grafana                 # 1.3.0; the agent tier needs it
-uv run pytest -q                         # 364 tests, offline, no credentials
+uv run pytest -q                         # 387 tests, offline, no credentials
 uv run ruff check .
 ```
 
@@ -506,7 +507,7 @@ opt-in.
 | 3 | Dashboards; ML forecasts; outlier detectors; alert rules | Forecast differs from plan; crew alert fires on comp-pool-2 | ✅ |
 | 4 | MCP read-only + write instances; ADK pipeline; approval gate; write-back | Four demo questions answered cold, tool timeline showing real MCP calls | ✅ 4/4 |
 | 5 | EvalOps: self-instrumentation, judge tier, EvalOps surface | Trace + eval events land in the same stack; drift and privacy alerts evaluate | ✅ |
-| 6 | Cloud Run deploy *run*; supervisor console | Full demo against the public URL in a clean browser profile | ✅ deployed — [https://turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app); supervisor console still open |
+| 6 | Cloud Run deploy *run*; supervisor console | Full demo against the public URL in a clean browser profile | ✅ deployed — [https://turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app) with a public playground at `/`, capped three ways; the *supervisor* console (the approval gate as a UI) is still CLI-only |
 | 7 | Video, README, Devpost | Submitted | in progress — [`docs/DEMO.md`](docs/DEMO.md) |
 
 **Open by decision.** Live Kitsu and OpenCue instances: no container runtime on

@@ -112,12 +112,15 @@ Analysts are read-only *by construction*, not by prompt — they are wired to an
 
 ## Try it
 
-The agent is live on Cloud Run. No auth, nothing to install — open
-[the URL](https://turnaround-agent-b465d3vxhq-uc.a.run.app) in a browser for
-the endpoint list, or go straight at it:
+**[turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app)** —
+a playground with the four questions verified against the live stack. Ask one and
+you get the answer, the judge scorecard, and the full tool timeline showing the
+PromQL, LogQL and TraceQL the agents actually wrote. A run takes 30–90 seconds
+because it is really running.
+
+No auth, nothing to install. Same thing from a terminal:
 
 ```bash
-curl -s https://turnaround-agent-b465d3vxhq-uc.a.run.app/health
 curl -s -H 'content-type: application/json' \
   -d '{"question":"why is SEQ0420 slipping and what is it costing?"}' \
   https://turnaround-agent-b465d3vxhq-uc.a.run.app/ask
@@ -127,11 +130,18 @@ It is public and cannot write: `serve.py` runs `AutoApprover(approve=False)` and
 the analysts are wired to `mcp-grafana --disable-write`. A Cloud Run job re-seeds
 the stack every 15 minutes, so the answers are against live data whenever you ask.
 
+Public and *unbounded* would be a different thing — every question spends real
+Gemini calls on a real bill — so the endpoint is capped three ways
+([`agent/limits.py`](agent/limits.py)): per visitor, a global daily budget, and
+concurrency. `GET /api/capacity` says what is left. The counters are per
+instance, which the module is explicit about rather than implying they are
+global.
+
 ## Running it
 
 ```bash
 uv sync --group dev
-uv run pytest            # 364 tests, offline: no network, no credentials
+uv run pytest            # 387 tests, offline: no network, no credentials
 uv run ruff check .
 ```
 

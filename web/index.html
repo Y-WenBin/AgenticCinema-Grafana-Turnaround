@@ -8,9 +8,16 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta property="og:title" content="Turnaround — crunch is forecastable">
 <meta property="og:description" content="Joins the creative schedule to the render farm in Grafana. Ask it a question and watch the agents work.">
-<meta property="og:image" content="/banner.png">
+<!-- og:image must be absolute: link scrapers do not resolve relative URLs
+     reliably and do not run JS, so a relative path silently yields no
+     preview -- which is the one place this card actually earns its keep.
+     Hardcoded to the canonical deployment on purpose; og tags describe the
+     public page, not whichever host happens to be serving the file. -->
+<meta property="og:url" content="https://turnaround-agent-b465d3vxhq-uc.a.run.app/">
+<meta property="og:image" content="https://turnaround-agent-b465d3vxhq-uc.a.run.app/banner.png">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://turnaround-agent-b465d3vxhq-uc.a.run.app/banner.png">
 <style>
 :root{
   --bg:#090b10; --surface:#12151e; --surface-2:#171b26; --line:#242a3a;

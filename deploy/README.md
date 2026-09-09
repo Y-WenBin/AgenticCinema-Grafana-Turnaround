@@ -43,6 +43,13 @@ pins it.
 The project comes from `GOOGLE_CLOUD_PROJECT` in your `.env`; set
 `PROJECT_ID=other-proj` (and `REGION=`) to override either.
 
+The service is public and the playground at `/` is what a visitor sees. Because
+it is open, `/ask` runs behind three caps — per visitor, a global daily budget,
+and concurrency (`TURNAROUND_ASKS_PER_HOUR` / `_PER_DAY` / `TURNAROUND_CONCURRENT_ASKS`,
+see [`agent/limits.py`](../agent/limits.py)). They are per instance, so the real
+ceiling is `--max-instances` times the daily number: check that product against
+a billing alert, not the configured value. `GET /api/capacity` reports what is left.
+
 This deploys **two** workloads from one image:
 
 | Workload | What it is |

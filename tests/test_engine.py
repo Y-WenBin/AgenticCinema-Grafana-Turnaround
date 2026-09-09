@@ -374,7 +374,11 @@ def test_the_page_only_calls_endpoints_that_exist():
 def test_the_hackathon_card_is_the_link_preview_not_just_decoration():
     """A judge meets this project as a pasted link at least as often as a page."""
     html = (REPO_ROOT / "web" / "index.html").read_text()
-    assert 'property="og:image"' in html and "/banner.png" in html
+    og = re.search(r'property="og:image" content="([^"]+)"', html)
+    assert og, "no og:image, so a pasted link renders as a bare URL"
+    assert og.group(1).startswith("https://"), \
+        "og:image must be absolute -- scrapers do not run JS and resolve relative paths unreliably"
+    assert og.group(1).endswith("/banner.png")
     assert (REPO_ROOT / "web" / "banner.png").is_file()
 
 

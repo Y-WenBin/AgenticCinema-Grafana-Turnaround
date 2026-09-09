@@ -192,7 +192,7 @@ except the terminal ones can be re-taken from a single seeded session.
 
 | # | Command | What to highlight |
 |---|---|---|
-| T1 | `uv run pytest -q` | `364 passed`. Two seconds under the close, or cut entirely if tight |
+| T1 | `uv run pytest -q` | `387 passed`. Two seconds under the close, or cut entirely if tight |
 | T2 | Question 1 (below) | Evidence block, then the `*`-marked tool timeline |
 | T3 | Question 2 | The pools named — and the one that isn't |
 | T4 | Question 3 with `--interactive` | The approval prompt, the evidence chain, the `y` |
@@ -265,7 +265,16 @@ curl -s -H 'content-type: application/json' \
   https://turnaround-agent-b465d3vxhq-uc.a.run.app/ask
 ```
 
-Shoot **C3** against this. Two things to know before you point a camera at it:
+Open it in a browser and there is a **playground**: the four questions above as
+one-click chips, then the answer, the judge scorecard and the tool timeline with
+the real PromQL/LogQL/TraceQL. That timeline is the shot — it is the difference
+between claiming the join exists and showing the query that performs it.
+
+Shoot **C3** against this. Three things to know before you point a camera at it:
+
+- **The run is 30–90s of dead air.** Fine as a cutaway, fatal as a held shot.
+  Either cut to the timeline panel on the return, or start the request, cut to
+  the Grafana dashboards, and cut back.
 
 - **Curl `/health`, not `/healthz`.** Google Frontend intercepts the exact path
   `/healthz` on `*.run.app` and returns its own HTML 404 without reaching the
@@ -273,6 +282,10 @@ Shoot **C3** against this. Two things to know before you point a camera at it:
 - **Cold start is real.** The first `/ask` after an idle period pays ADK and
   Vertex client init on top of the pipeline. Send one throwaway request a minute
   before you roll, or deploy with `--min-instances 1` for the day.
+
+The endpoint is capped (per visitor, a daily budget, concurrency). If a take
+burns through a visitor's hourly slots mid-shoot, `GET /api/capacity` shows what
+is left, and `TURNAROUND_ASKS_PER_HOUR` on the service lifts it.
 
 A Cloud Run job re-seeds the stack every 15 minutes
 (`turnaround-seed-every-15m`), so the URL answers with live data at any hour —

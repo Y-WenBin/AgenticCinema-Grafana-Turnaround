@@ -22,6 +22,7 @@ here are true as of their date and are not retro-edited.
 | 2026-09-10 | [First real deploy: the buildpack trap](#2026-09-10--first-real-deploy-the-buildpack-trap) |
 | 2026-09-10 | [Deployed — and three faults only a real run could find](#2026-09-10--deployed--and-three-faults-only-a-real-run-could-find) |
 | 2026-09-10 | [The front door was a 404, and I had already seen it](#2026-09-10--the-front-door-was-a-404-and-i-had-already-seen-it) |
+| 2026-09-10 | [Something to try, and a budget that survives it](#2026-09-10--something-to-try-and-a-budget-that-survives-it) |
 
 ---
 
@@ -375,3 +376,76 @@ lacking but because I already knew what I was looking for.
 
 Three tests, at `tests/test_engine.py::test_root_is_not_a_404` and the two beside
 it. 364 tests.
+
+
+## 2026-09-10 — something to try, and a budget that survives it
+
+Two criticisms of the deployed demo, both fair, both from the position that
+actually matters — a judge with a link and not much time. It was not nice to look
+at, and there was nothing to *try*. The endpoint returned JSON to a browser and
+that was the entire interface. Fixing the 404 at `/` earlier today had made the
+front door answer; it had not made it a door anyone wanted to walk through.
+
+`web/index.html` is now a playground. The four questions from `docs/DEMO.md` —
+the ones verified cold against the live stack — are one click each, and each is
+labelled with *what it proves* rather than just what it asks, because a stranger
+should not have to reverse-engineer why one question is more interesting than
+another. What comes back is the answer, the judge scorecard, and the full tool
+timeline with the PromQL, LogQL and TraceQL the agents actually wrote. That last
+panel is the one that matters: it is the difference between claiming a join
+exists and showing the query that performs it.
+
+Three things worth recording from building it.
+
+**The banner was a portrait.** The hackathon card is 1200×630 and I gave it
+`width:100%; max-width:440px` plus the intrinsic `width`/`height` attributes —
+and no `height:auto`. The attribute won, so it rendered 440px wide and 614px
+tall, squashed. Nothing in a test would ever have caught that; it took looking at
+the page. Which is the same lesson as the two entries above it, arriving by a
+third route: I keep finding the class of bug that is invisible to everything
+except a person looking at the actual artefact.
+
+**The page misreported its own judges.** It counted LLM-scored checks with
+`actor_type === "llm"`. The field's values are `deterministic` and `ai`
+(`agent/evaluation.py`), so the filter matched nothing and the page confidently
+announced "6 deterministic checks, 0 judged by Gemini" under three chips that
+were plainly the LLM judge's. A confident, specific, wrong sentence about the
+project's most distinctive feature. It now counts what is *not* deterministic,
+so a new actor type cannot silently become a deterministic one.
+
+**Open and unbounded are different things.** Every `/ask` is real Gemini calls on
+a real bill, so `agent/limits.py` caps three things that fail in three different
+ways: a per-visitor rolling window (one person hammering it), a global daily
+budget (the actual spend ceiling), and concurrency (a run holds an `mcp-grafana`
+subprocess for ~40s — unbounded concurrency does not cost more, it just makes
+every simultaneous run slow enough to look broken).
+
+Two details in there are load-bearing. Admission *decides and records* under one
+lock: check-then-increment as two steps lets a simultaneous burst all observe the
+same pre-increment count and sail through, which a sixteen-thread test against a
+budget of ten now pins. And a refused request must cost no Gemini call and spend
+no budget — otherwise a bot that only ever receives 429s still drains the day for
+everyone, and the rate limiter becomes the denial of service.
+
+The honest limitation: these counters live in the process, so they are per
+*instance*. With `--max-instances 2` the true ceiling is twice the configured
+daily number, and a cold start forgets the window early. Exact global limits need
+shared state, which is real machinery for a demo whose worst case is already
+bounded at two instances. The module says so in as many words rather than
+implying the numbers are global — the right number to check against a billing
+alert is the product, not the setting.
+
+One last trap, of the same family as the buildpack one: `web/` was listed in both
+`.dockerignore` and `.gcloudignore`, from when it was an empty placeholder for
+the supervisor console. Left alone, the deploy would have shipped a landing page
+that 404s its own banner — and only in production, since a local run reads the
+file straight off disk. `tests/test_reproducibility.py` now fails if either file
+excludes it again.
+
+One more, found by re-reading my own claim: the `og:image` was `/banner.png`, a
+relative URL. Scrapers do not run JS and resolve relative paths unreliably, so
+the pasted-link preview — the single place that card genuinely earns its keep —
+would have quietly rendered nothing. It is absolute now, pinned by a test that
+checks the scheme rather than merely the presence of the tag.
+
+387 tests.
