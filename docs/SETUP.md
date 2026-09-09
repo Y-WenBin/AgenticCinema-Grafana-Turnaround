@@ -194,8 +194,11 @@ uv run python -m grafana.provision  # folder "Turnaround" + 4 dashboards + alert
 uv run python -m agent.run "Why is SEQ0420 slipping, and what is it costing in artist-days?"
 ```
 
-The history is compressed into a ~45-minute wall-clock window that ages out of
-"recent" in about an hour. Keep it fresh while you explore:
+The history is compressed into a ~45-minute wall-clock window ending at the
+moment of seeding, and every query reads it with `last_over_time((…)[2h:])`.
+Roughly two hours after a seed the queries return nothing at all — which reads
+as a broken agent, not as stale data. **Re-seed before any live session**, and
+keep it fresh while you explore:
 
 ```bash
 uv run python -m seed.refresh       # re-seeds every 15 min; Ctrl-C to stop
