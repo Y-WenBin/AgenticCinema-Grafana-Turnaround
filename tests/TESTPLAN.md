@@ -10,7 +10,7 @@ Run everything:
 
 ```bash
 uv sync --group dev
-uv run pytest -q          # 358 tests, no network, no credentials
+uv run pytest -q          # 360 tests, no network, no credentials
 uv run ruff check .       # clean
 ```
 
@@ -131,7 +131,9 @@ onto `shot_id` / `sequence` / `department` — and the crunch forecast that foll
 | `/ask` contract | auto | The endpoint returns exactly `answer`, `timeline`, `evaluation`, `response_id`, `circuit_breaker_tripped`, `halted_by`, `halt_detail`, `grafana_url`; an unconfigured server returns a single `error` naming the missing keys instead of a partial body; a question outside 3..2000 characters is rejected with 422 before any Gemini call is made. | `test_engine.py` |
 | `/healthz` is a pure read | auto | It reports the resolved readiness flags, MCP mode and Gemini-call ceiling without mutating process env or building an agent, so a Cloud Run probe cannot have side effects. | `test_engine.py::test_healthz_is_a_pure_read_and_publishes_the_resolved_ceiling` |
 | Telemetry misconfiguration is a named startup error | auto | A missing `OTEL_EXPORTER_OTLP_ENDPOINT` fails with a message pointing at `.env.example`, not a connection timeout mid-demo. Partial exporter injection wires the signals given and discards the rest rather than raising from inside the OTel SDK. | `test_providers.py` |
-| Deploy image is buildable | manual | `docker build -f deploy/Dockerfile -t turnaround .` succeeds; `mcp-grafana` checksum matches the pin. | see Part 6 |
+| Deploy image is buildable | manual | `docker build -t turnaround .` succeeds; `mcp-grafana` checksum matches the pin. | see Part 6 |
+| Deploy builds the Dockerfile, not a buildpack | auto | The Dockerfile is at the repo root (`gcloud` builds a Dockerfile only from the source root; anywhere else it silently falls back to buildpacks and ships an image with no `mcp-grafana` and the wrong entrypoint), and `deploy.sh` builds once and deploys service and job from that one image. | `test_reproducibility.py::test_deploy_builds_the_dockerfile_not_a_buildpack` |
+| Hosted demo data stays alive | auto | `deploy.sh` deploys the `seed.refresh` Cloud Run job and a Cloud Scheduler trigger, so the ~45-minute compressed window is re-seeded before it ages out of Mimir's ingestion horizon. | `test_reproducibility.py::test_deploy_keeps_the_demo_data_alive` |
 | Deploy path is credential-safe | auto | `.gcloudignore` / `.dockerignore` exclude `.env` and `.secrets/`; `agent/serve.py` uses `AutoApprover(approve=False)` so the endpoint cannot mutate anything. | `test_reproducibility.py::test_deploy_context_excludes_secrets`, `::test_http_endpoint_cannot_approve_writes` |
 
 ---

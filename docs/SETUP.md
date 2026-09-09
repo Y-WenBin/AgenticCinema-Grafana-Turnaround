@@ -381,15 +381,20 @@ PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1 ./deploy/deploy.sh
 
 It enables APIs, makes a least-privilege runtime service account
 (`roles/aiplatform.user`), pushes the Grafana + OTLP secrets to Secret Manager,
-and deploys `deploy/Dockerfile`. Then:
+builds `./Dockerfile` once, and deploys two things from that one image: the
+agent service, and a **re-seed job** on a 15-minute Cloud Scheduler trigger so
+the compressed window never ages out from under the hosted demo. Then:
 
 ```bash
 URL=$(gcloud run services describe turnaround-agent --region us-central1 --format 'value(status.url)')
-TOKEN=$(gcloud auth print-identity-token)
-curl -s -H "Authorization: Bearer $TOKEN" "$URL/healthz" | python3 -m json.tool
-curl -s -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+curl -s "$URL/healthz" | python3 -m json.tool
+curl -s -H 'content-type: application/json' \
   -d '{"question":"why is SEQ0420 slipping and what is it costing?"}' "$URL/ask" | python3 -m json.tool
 ```
+
+The service is public so a reviewer can open it. It cannot write anything:
+`serve.py` runs `AutoApprover(approve=False)`, `--max-instances` caps the blast
+radius and `TURNAROUND_MAX_LLM_CALLS` caps the spend of any one request.
 
 Full detail: [`deploy/README.md`](../deploy/README.md).
 

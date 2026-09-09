@@ -10,9 +10,21 @@ events to the same Grafana Cloud stack it queries.
 
 | File | Purpose |
 |---|---|
-| `Dockerfile` | Python 3.12 + `uv`-installed deps + the pinned, checksum-verified `mcp-grafana` binary (OSS MCP mode spawns it as a stdio subprocess). |
-| `deploy.sh` | One-shot deploy: enables APIs, makes a least-privilege runtime service account (`roles/aiplatform.user` only), pushes Grafana + OTLP credentials to Secret Manager, `gcloud run deploy --source .`. |
+| `../Dockerfile` | Python 3.12 + `uv`-installed deps + the pinned, checksum-verified `mcp-grafana` binary (OSS MCP mode spawns it as a stdio subprocess). **At the repo root deliberately** — see below. |
+| `deploy.sh` | One-shot deploy: enables APIs, makes a least-privilege runtime service account (`roles/aiplatform.user` only), pushes Grafana + OTLP credentials to Secret Manager, builds the image once, then deploys the agent service *and* the re-seed job from it. |
 | `../.gcloudignore` / `../.dockerignore` | Keep `.env`, `.secrets/`, `.venv` and caches out of the build context and the image. |
+
+### Why the Dockerfile is at the root
+
+`gcloud run deploy --source .` and `gcloud builds submit` build a Dockerfile
+only when one is present in the **source root**. With the file at
+`deploy/Dockerfile` the build silently falls back to Google Cloud buildpacks: the
+deploy succeeds, and the resulting image has no `mcp-grafana` binary and the
+wrong entrypoint, so the service fails at the first tool call. `deploy.sh` now
+builds explicitly (`gcloud builds submit --tag`) and deploys both workloads with
+`--image`, so there is no implicit build path left to guess wrong.
+`tests/test_reproducibility.py::test_deploy_builds_the_dockerfile_not_a_buildpack`
+pins it.
 
 ## Prerequisites
 
@@ -28,17 +40,50 @@ events to the same Grafana Cloud stack it queries.
 PROJECT_ID=your-gcp-project REGION=us-central1 ./deploy/deploy.sh
 ```
 
-The service is deployed `--no-allow-unauthenticated`. Call it with an identity token:
+This deploys **two** workloads from one image:
+
+| Workload | What it is |
+|---|---|
+| `turnaround-agent` (service) | The FastAPI endpoint. Public, so a reviewer can open it. |
+| `turnaround-seed` (job) | `python -m seed.refresh --once`, triggered every 15 minutes by Cloud Scheduler. |
+
+The service is public (`--allow-unauthenticated`) because a hosted demo nobody
+can open is not a demo. It is safe to be public for reasons that are enforced in
+code rather than promised: `serve.py` runs `AutoApprover(approve=False)` so no
+request can mutate Kitsu or Grafana, the analysts are wired to `mcp-grafana`
+started `--disable-write`, `--max-instances 2` caps the blast radius, and
+`TURNAROUND_MAX_LLM_CALLS` caps the spend of any single request.
 
 ```bash
 URL=$(gcloud run services describe turnaround-agent --region us-central1 --format 'value(status.url)')
-TOKEN=$(gcloud auth print-identity-token)
 
-curl -s -H "Authorization: Bearer $TOKEN" "$URL/healthz" | jq
-curl -s -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+curl -s "$URL/healthz" | jq
+curl -s -H 'content-type: application/json' \
   -d '{"question":"why is SEQ0420 slipping and what is it costing?"}' \
   "$URL/ask" | jq
 ```
+
+To lock it down again: `gcloud run services remove-iam-policy-binding
+turnaround-agent --region us-central1 --member allUsers --role roles/run.invoker`.
+
+### The re-seed job
+
+The show is compressed into a ~45-minute wall-clock window ending at the moment
+of seeding, and hosted Mimir will not accept samples much older than an hour. A
+stack seeded three hours ago answers every question with nothing, which reads as
+a broken agent rather than stale data. The job re-seeds on a schedule so the
+newest points are always a few minutes old.
+
+```bash
+gcloud scheduler jobs pause  turnaround-seed-every-15m --location us-central1   # stop ingesting
+gcloud scheduler jobs resume turnaround-seed-every-15m --location us-central1
+gcloud run jobs execute turnaround-seed --region us-central1 --wait             # seed right now
+```
+
+Deploy with `SEED_PAUSED=1` to create the schedule paused. Each run is a full
+deterministic re-seed that overwrites rather than forks; the cost that matters
+is **Grafana Cloud ingestion**, not Cloud Run compute, so pause it when you are
+not demoing.
 
 `/ask` returns `{answer, timeline, evaluation, response_id, circuit_breaker_tripped, grafana_url}`.
 Take `response_id` into Tempo (`{ span.gen_ai.response.id = "<id>" }`) to see the
@@ -49,7 +94,8 @@ for that run's evaluation events.
 
 - **Writes are disabled on the endpoint.** `serve.py` uses `AutoApprover(approve=False)`;
   a public URL must not be able to mutate Kitsu or Grafana. The gated write-back
-  path is CLI-only (`uv run python -m agent.run --approve "..."`).
+  path is CLI-only (`uv run python -m agent.run --approve "..."`). Enforced by
+  `test_reproducibility.py::test_http_endpoint_cannot_approve_writes`.
 - **Auth model.** Vertex is the runtime service account's ADC — no key file in the
   image. Grafana and OTLP secrets are Secret Manager versions mounted as env vars.
 - **Circuit breaker.** `TURNAROUND_MAX_LLM_CALLS` (default 40) caps Gemini calls

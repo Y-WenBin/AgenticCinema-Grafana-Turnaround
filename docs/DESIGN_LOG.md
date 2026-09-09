@@ -19,6 +19,7 @@ here are true as of their date and are not retro-edited.
 | 2026-09-06 | [Hardening, reproducibility, deploy scaffolding](#2026-09-06--hardening-reproducibility-deploy-scaffolding) |
 | 2026-09-06 | [Tool coverage — trackers, farms, NLEs](#2026-09-06--tool-coverage) |
 | 2026-09-09 | [Code review and hardening pass](#2026-09-09--code-review-and-hardening-pass) |
+| 2026-09-10 | [First real deploy: the buildpack trap](#2026-09-10--first-real-deploy-the-buildpack-trap) |
 
 ---
 
@@ -234,3 +235,53 @@ session; `seed/refresh.py` exists for exactly this.
 
 Suite **241 → 358** tests; `agent/config.py` and `observability/providers.py`
 had had no direct coverage at all.
+
+---
+
+## 2026-09-10 — first real deploy: the buildpack trap
+
+`gcloud` had never been installed on the build machine, so `deploy/deploy.sh`
+had never been *run*. Installing it turned up two faults that no amount of
+reading would have found, plus one clarification worth writing down.
+
+**The Vertex service account is not a project login.** `.secrets/gcp-sa.json`
+grants `roles/aiplatform.user` and nothing else. Activated in `gcloud` it can
+list enabled APIs and call Gemini, and that is the end of it: Cloud Run Admin
+was not even enabled on the project, and this identity cannot enable it. A
+deploy needs a human account. Worth stating plainly because "we have a key
+file" reads like "we are connected", and it is not the same claim.
+
+**`--source .` would have shipped the wrong image, successfully.** `gcloud run
+deploy --source .` builds a Dockerfile only if it finds one in the *source
+root*; otherwise it falls back to Google Cloud buildpacks without complaint.
+The Dockerfile was at `deploy/Dockerfile`, so the build would have produced a
+buildpack image with no `mcp-grafana` binary and the wrong entrypoint — a green
+deploy and a service that dies at the first tool call, which is the worst
+possible failure to discover on camera. Fixed by moving the Dockerfile to the
+repo root and making the build explicit: `gcloud builds submit --tag`, then
+both workloads deployed with `--image`, so there is no implicit build path left
+to guess wrong. Pinned by
+`test_reproducibility.py::test_deploy_builds_the_dockerfile_not_a_buildpack`.
+
+**The hosted demo needed the job `seed/refresh.py` already described.** Its
+docstring said "in production this is a Cloud Run job on a schedule, not a
+process babysat by a laptop (see deploy/)" — and `deploy/` had no such job. The
+gap only matters once something is hosted: the compressed window ages out of
+Mimir in about an hour, so a hosted URL visited the next morning answers every
+question with nothing. `deploy.sh` now deploys `turnaround-seed` from the same
+image with the entrypoint overridden, plus a Cloud Scheduler trigger every 15
+minutes, and primes it once at the end of the deploy so the demo is live
+immediately.
+
+**The endpoint is now public.** A hosted URL a reviewer cannot open is not a
+hosted URL. It is safe to be public for reasons enforced in code rather than
+promised: `serve.py` runs `AutoApprover(approve=False)`, the analysts are wired
+to `mcp-grafana --disable-write`, `--max-instances 2` bounds the blast radius
+and `TURNAROUND_MAX_LLM_CALLS` bounds any single request.
+
+Grafana Cloud needed no changes — four dashboards, four alert rules and three
+ML jobs were still provisioned and re-provisioned clean. Only the data had aged
+out, which is the whole reason the re-seed job exists. After a re-seed the full
+question ran end to end: the join at 4.51 core-h/iter against ~2.2 elsewhere,
+`frame 118` named as the mechanism, six evaluation checks passing, and both
+write attempts denied by the gate.

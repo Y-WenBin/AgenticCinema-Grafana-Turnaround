@@ -382,6 +382,38 @@ def test_deploy_context_excludes_secrets():
         assert ".secrets" in body
 
 
+def test_deploy_builds_the_dockerfile_not_a_buildpack():
+    """The image must come from ./Dockerfile, and the Dockerfile must be at the root.
+
+    `gcloud run deploy --source .` / `gcloud builds submit` build a Dockerfile
+    only when one sits in the *source root*. With the file anywhere else the
+    build silently falls back to Google Cloud buildpacks and ships an image with
+    no `mcp-grafana` binary and the wrong entrypoint -- a deploy that succeeds
+    and a service that fails at the first tool call.
+    """
+    dockerfile = REPO / "Dockerfile"
+    assert dockerfile.is_file(), "Dockerfile must live at the repo root"
+    assert not (REPO / "deploy" / "Dockerfile").exists(), "one Dockerfile, at the root"
+
+    body = dockerfile.read_text()
+    assert "mcp-grafana" in body and "sha256sum -c" in body
+    assert "agent.serve" in body
+
+    script = (REPO / "deploy" / "deploy.sh").read_text()
+    assert "gcloud builds submit --tag" in script
+    assert "--source ." not in script, "an implicit source build would pick buildpacks"
+    assert script.count("--image \"$IMAGE\"") == 2, "service and job share one image"
+
+
+def test_deploy_keeps_the_demo_data_alive():
+    """A hosted demo needs the re-seed job; the seed ages out in about an hour."""
+    script = (REPO / "deploy" / "deploy.sh").read_text()
+    assert "gcloud run jobs deploy" in script
+    assert "seed.refresh" in script, "the job must override the entrypoint"
+    assert "gcloud scheduler jobs" in script
+    assert "cloudscheduler.googleapis.com" in script, "the schedule needs its API enabled"
+
+
 def test_http_endpoint_cannot_approve_writes():
     """A public URL must not be able to mutate Kitsu or Grafana."""
     serve_src = (REPO / "agent" / "serve.py").read_text()

@@ -114,7 +114,7 @@ Analysts are read-only *by construction*, not by prompt — they are wired to an
 
 ```bash
 uv sync --group dev
-uv run pytest            # 358 tests, offline: no network, no credentials
+uv run pytest            # 360 tests, offline: no network, no credentials
 uv run ruff check .
 ```
 

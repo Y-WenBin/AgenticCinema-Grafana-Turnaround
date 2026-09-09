@@ -1,5 +1,11 @@
 # Turnaround agent — Cloud Run image.
 #
+# This file lives at the repo root on purpose. `gcloud run deploy --source .`
+# builds a Dockerfile only if it finds one in the *source root*; anywhere else
+# it silently falls back to buildpacks and produces an image with no
+# `mcp-grafana` binary and the wrong entrypoint. tests/test_reproducibility.py
+# pins the location.
+#
 # Runs agent/serve.py (FastAPI on $PORT). The deployed path is the OSS Grafana
 # MCP mode, so the image bundles the `mcp-grafana` binary; ADK spawns it as a
 # stdio subprocess (no ports, no sidecar). Vertex auth is the Cloud Run service
