@@ -20,7 +20,7 @@ record — including every bug found on the way — is
 
 **Status.** Data plane, dashboards/alerts/ML, the agent tier, the EvalOps tier
 and the deploy scaffolding are complete and tested. All four demo questions are
-verified cold against the live stack. **360 tests**, offline; `ruff` clean. The
+verified cold against the live stack. **361 tests**, offline; `ruff` clean. The
 Cloud Run *deploy run* and a live Kitsu/OpenCue instance are the two open items
 (see [Roadmap](#roadmap)). Grafana Cloud stack `your-stack`
 (`prod-ap-southeast-1`); Vertex AI `gemini-2.5-flash`.
@@ -396,7 +396,7 @@ punchline. The real story is stronger.
 ```bash
 uv sync --group dev
 brew install mcp-grafana                 # 1.3.0; the agent tier needs it
-uv run pytest -q                         # 360 tests, offline, no credentials
+uv run pytest -q                         # 361 tests, offline, no credentials
 uv run ruff check .
 ```
 
@@ -506,7 +506,7 @@ opt-in.
 | 3 | Dashboards; ML forecasts; outlier detectors; alert rules | Forecast differs from plan; crew alert fires on comp-pool-2 | ✅ |
 | 4 | MCP read-only + write instances; ADK pipeline; approval gate; write-back | Four demo questions answered cold, tool timeline showing real MCP calls | ✅ 4/4 |
 | 5 | EvalOps: self-instrumentation, judge tier, EvalOps surface | Trace + eval events land in the same stack; drift and privacy alerts evaluate | ✅ |
-| 6 | Cloud Run deploy *run*; supervisor console | Full demo against the public URL in a clean browser profile | scaffolding done; needs `gcloud` |
+| 6 | Cloud Run deploy *run*; supervisor console | Full demo against the public URL in a clean browser profile | ✅ deployed — [https://turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app); supervisor console still open |
 | 7 | Video, README, Devpost | Submitted | in progress — [`docs/DEMO.md`](docs/DEMO.md) |
 
 **Open by decision.** Live Kitsu and OpenCue instances: no container runtime on

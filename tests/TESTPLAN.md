@@ -10,7 +10,7 @@ Run everything:
 
 ```bash
 uv sync --group dev
-uv run pytest -q          # 360 tests, no network, no credentials
+uv run pytest -q          # 361 tests, no network, no credentials
 uv run ruff check .       # clean
 ```
 

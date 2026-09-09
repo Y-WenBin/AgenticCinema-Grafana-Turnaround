@@ -108,13 +108,28 @@ Analysts are read-only *by construction*, not by prompt — they are wired to an
 | [`agent/`](agent/) — the deterministic multi-agent pipeline, `mcp-grafana` in two modes (OSS / hosted OAuth), the gated write-back | complete |
 | [`observability/`](observability/) — the agent instruments itself with the OTel GenAI conventions | complete |
 | [`agent/evaluation.py`](agent/evaluation.py) — a deterministic judge + an LLM judge, emitted as `gen_ai.evaluation.result` | complete |
-| [`deploy/`](deploy/) — Cloud Run image + one-shot deploy script | scaffolding done; the deploy run needs `gcloud` + a project |
+| [`deploy/`](deploy/) — Cloud Run image + one-shot deploy script | **deployed** — [https://turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app), public and read-only, re-seeded every 15 min by a Cloud Run job |
+
+## Try it
+
+The agent is live on Cloud Run. No auth, nothing to install:
+
+```bash
+curl -s https://turnaround-agent-b465d3vxhq-uc.a.run.app/health
+curl -s -H 'content-type: application/json' \
+  -d '{"question":"why is SEQ0420 slipping and what is it costing?"}' \
+  https://turnaround-agent-b465d3vxhq-uc.a.run.app/ask
+```
+
+It is public and cannot write: `serve.py` runs `AutoApprover(approve=False)` and
+the analysts are wired to `mcp-grafana --disable-write`. A Cloud Run job re-seeds
+the stack every 15 minutes, so the answers are against live data whenever you ask.
 
 ## Running it
 
 ```bash
 uv sync --group dev
-uv run pytest            # 360 tests, offline: no network, no credentials
+uv run pytest            # 361 tests, offline: no network, no credentials
 uv run ruff check .
 ```
 

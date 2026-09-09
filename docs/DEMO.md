@@ -192,7 +192,7 @@ except the terminal ones can be re-taken from a single seeded session.
 
 | # | Command | What to highlight |
 |---|---|---|
-| T1 | `uv run pytest -q` | `360 passed`. Two seconds under the close, or cut entirely if tight |
+| T1 | `uv run pytest -q` | `361 passed`. Two seconds under the close, or cut entirely if tight |
 | T2 | Question 1 (below) | Evidence block, then the `*`-marked tool timeline |
 | T3 | Question 2 | The pools named — and the one that isn't |
 | T4 | Question 3 with `--interactive` | The approval prompt, the evidence chain, the `y` |
@@ -254,18 +254,30 @@ and the LLM judge's `hallucination` at or near 1.00.
 
 ---
 
-## Risk: the hosted URL
+## The hosted URL
 
-The rules require a **hosted project URL**. `deploy/` has the Dockerfile, the
-one-shot `deploy.sh` and a documented path, but the deploy has never been *run* —
-`gcloud` is not installed on the build machine. Until it is:
+**https://turnaround-agent-b465d3vxhq-uc.a.run.app** — public, no auth, live.
 
-- Install the SDK (`brew install --cask google-cloud-sdk`), then
-  `PROJECT_ID=… REGION=… ./deploy/deploy.sh`, and shoot C3.
-- If that cannot happen before the deadline, do **not** stage a fake Cloud Run
-  page. Show the Vertex AI traffic (C1) and the CLI, and be explicit in the
-  Devpost text about what is deployed and what runs locally. A judge who catches
-  a staged frame discounts everything else in the video.
+```bash
+curl -s https://turnaround-agent-b465d3vxhq-uc.a.run.app/health
+curl -s -H 'content-type: application/json' \
+  -d '{"question":"why is SEQ0420 slipping and what is it costing?"}' \
+  https://turnaround-agent-b465d3vxhq-uc.a.run.app/ask
+```
+
+Shoot **C3** against this. Two things to know before you point a camera at it:
+
+- **Curl `/health`, not `/healthz`.** Google Frontend intercepts the exact path
+  `/healthz` on `*.run.app` and returns its own HTML 404 without reaching the
+  container. On camera that looks like a dead service.
+- **Cold start is real.** The first `/ask` after an idle period pays ADK and
+  Vertex client init on top of the pipeline. Send one throwaway request a minute
+  before you roll, or deploy with `--min-instances 1` for the day.
+
+A Cloud Run job re-seeds the stack every 15 minutes
+(`turnaround-seed-every-15m`), so the URL answers with live data at any hour —
+this is what removes the two-hour shelf life from the hosted demo, though a
+local demo still needs its own re-seed.
 
 ---
 

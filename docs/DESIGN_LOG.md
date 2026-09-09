@@ -20,6 +20,7 @@ here are true as of their date and are not retro-edited.
 | 2026-09-06 | [Tool coverage — trackers, farms, NLEs](#2026-09-06--tool-coverage) |
 | 2026-09-09 | [Code review and hardening pass](#2026-09-09--code-review-and-hardening-pass) |
 | 2026-09-10 | [First real deploy: the buildpack trap](#2026-09-10--first-real-deploy-the-buildpack-trap) |
+| 2026-09-10 | [Deployed — and three faults only a real run could find](#2026-09-10--deployed--and-three-faults-only-a-real-run-could-find) |
 
 ---
 
@@ -285,3 +286,49 @@ out, which is the whole reason the re-seed job exists. After a re-seed the full
 question ran end to end: the join at 4.51 core-h/iter against ~2.2 elsewhere,
 `frame 118` named as the mechanism, six evaluation checks passing, and both
 write attempts denied by the gate.
+
+---
+
+## 2026-09-10 — deployed — and three faults only a real run could find
+
+Live at **https://turnaround-agent-b465d3vxhq-uc.a.run.app**. Getting there took
+four attempts, and every failure was in code that had been reviewed, tested and
+committed. None of them was findable without running it.
+
+**`--args` needs the `=` form.** `gcloud run jobs deploy --args "-m,seed.refresh,--once"`
+fails with *"argument --args: expected one argument"* — the value begins with a
+dash, so argparse reads it as another flag. `--args="..."` works.
+
+**`--condition` is not uniform across gcloud.** `gcloud projects
+add-iam-policy-binding` requires it (it prompts interactively without it); the
+`gcloud run jobs` variant rejects it outright. The same idiom, copied one line
+down, fails the deploy.
+
+**Google Frontend swallows `/healthz` on `*.run.app`.** The worst of the three,
+because it is a false negative on a healthy service. GFE answers that exact
+lowercase path itself with a 1568-byte HTML 404; the request never reaches the
+container. Everything about the service looked correct — `Ready=True`, ingress
+`all`, `allUsers` bound, effective org policy `allValues: ALLOW`, TLS and DNS
+clean, and the container log showing `Uvicorn running on http://0.0.0.0:8080` —
+while the documented smoke test returned 404. Isolated by elimination:
+
+    /          -> {"detail":"Not Found"}  (22b, FastAPI: the request arrives)
+    /docs      -> Swagger UI              (the app is entirely fine)
+    /healthz   -> 1568b of Google HTML    (intercepted before the container)
+    /healthz2  -> {"detail":"Not Found"}  (so it is that exact path, not routing)
+
+The handler is now mounted at `/health` as well. `/healthz` stays for Cloud Run's
+own probes and for deployments not behind GFE.
+
+Worth recording the shape of the lesson rather than just the three bugs: all of
+this was *reviewed* code that a reasonable person would have signed off. The
+deploy script was correct as prose and wrong as an executable, and the health
+check was correct as an application and wrong as a deployed endpoint. Only the
+run tells you.
+
+What is live: the `turnaround-agent` service (public, `--max-instances 2`), the
+`turnaround-seed` job, and Cloud Scheduler `turnaround-seed-every-15m` firing
+every quarter hour — first execution `Completed`, `succeededCount 1`. The public
+endpoint answered the SEQ0420 question with the join intact (44.10 core-h against
+~0.8 elsewhere, `frame 118` named, 12.9 artist-days/week) and all eight documented
+response keys present.
