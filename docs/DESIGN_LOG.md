@@ -449,3 +449,67 @@ would have quietly rendered nothing. It is absolute now, pinned by a test that
 checks the scheme rather than merely the presence of the tag.
 
 387 tests.
+
+## 2026-09-10 — the other side of the glass, without opening the stack
+
+The playground shows a judge the front of the product: a question, an answer, a
+scorecard. It never showed the back — the Grafana Cloud stack all of that is
+read from. The obvious fix is Grafana's own public-dashboard sharing, and it is
+the wrong one for three separate reasons, only one of which I expected.
+
+The one I expected: a natively shared board runs **every panel's query for every
+anonymous visitor**, against the owner's stack, with no per-viewer limit. `/ask`
+is capped three ways; a public dashboard link on a submission page is capped in
+none. The risk is not exfiltration, it is denial of wallet — one scraper and the
+free-tier quota is gone mid-judging.
+
+The one I did not expect: the crew board would have published `di-pool-1`.
+`turnaround_pool_headcount` returns 2 for it, live, and "hours per rostered
+artist" for a two-person pool is approximately one person's timesheet. The
+board's own text panel documented this as deliberate — shown for context,
+excluded from every alert. Behind auth that is a defensible internal choice.
+Anonymous, it publishes exactly what `privacy_floor_respected` fails the agent
+for saying. A judge who clicks that check and then clicks the dashboard finds
+the contradiction in about ninety seconds.
+
+The third: the EvalOps log panel selector was bare — `{service_name="turnaround-agent"}`.
+Today that stream carries only evaluation events; I sampled it. But it is
+unfiltered, so it publishes whatever this service logs *next* — and since the
+playground shipped, that includes judge explanations paraphrasing questions a
+stranger typed into `/ask`. An open channel from a text box to a public page.
+
+So `agent/backend.py` instead: a fixed board of nine queries the service runs
+with its own credential. The strongest form of an allowlist turned out not to be
+validating a request but having nowhere to put one — the endpoint takes no
+parameters at all, and a test asserts the OpenAPI schema declares none. The
+privacy floor moved from a convention into the PromQL:
+`and on(pool) (max by (pool) (turnaround_pool_headcount) >= 3)`, with a test
+tying the `3` in the query to `MIN_POOL_SIZE` in the code, so raising one and
+forgetting the other fails the build. Results are cached for 30 s **while
+holding the lock** — building outside it would keep readers moving but let N
+simultaneous misses fan out into N upstream queries, which is the exact thing
+this module exists to prevent.
+
+Two things the seed data taught me on the way. `sum(turnaround_shots_approved_total)`
+is empty for most of every quarter hour: the show re-seeds every 15 minutes and
+Prometheus drops a series 5 minutes after its last sample, so a bare instant
+query blinks out between runs. Every metric tile reads
+`max_over_time(metric[20m])` — a window wider than the cycle. And an empty Loki
+result is not a zero, except when it is: "no privacy breaches" is the best fact
+on the page, and rendering it as `--` would hide a clean record behind what
+looks like a broken panel. Counting tiles floor to zero; score tiles do not,
+because a mean grounding score of 0.00 would claim the judges failed everything.
+
+Found while wiring it: `/ask` had been returning `grafana_url` in every
+response. Nothing rendered it. A public endpoint handing every caller the stack
+hostname is a free pointer at its login page, so it is gone, and the contract
+test now pins its absence rather than its presence.
+
+The internal boards kept the small pools, in one panel titled *"Below the
+aggregation floor — internal only, never share this panel"*. A test asserts
+there is exactly one such panel and that every other pool aggregation on that
+board carries the floor. The point is not to hide the number from the studio —
+it is that anyone reaching for a share button has been told, on the board
+itself, what they would be sharing.
+
+409 tests.

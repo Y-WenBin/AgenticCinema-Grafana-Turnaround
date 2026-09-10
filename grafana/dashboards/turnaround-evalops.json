@@ -590,7 +590,7 @@
     {
       "type": "table",
       "title": "Evaluation events (newest first)",
-      "description": "Every gen_ai.evaluation.result. The response_id links to the run's trace in Tempo -- pivot a low score to the exact chat and PromQL behind it.",
+      "description": "Narrowed to the evaluation event on purpose. This service logs nothing else today, so the filter changes no number \u2014 it is here so that a stack trace logged later under the same service_name does not silently join a panel someone may have shared.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -608,7 +608,7 @@
             "uid": "grafanacloud-logs"
           },
           "refId": "A",
-          "expr": "{service_name=\"turnaround-agent\"}",
+          "expr": "{service_name=\"turnaround-agent\"} | event_name=\"gen_ai.evaluation.result\"",
           "queryType": "range",
           "maxLines": 200
         }

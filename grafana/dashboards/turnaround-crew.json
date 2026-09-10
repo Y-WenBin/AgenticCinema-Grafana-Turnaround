@@ -71,7 +71,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Hours per rostered artist per week, by pool.** The forecastable half of crunch. `di-pool-1` is two people \u2014 below the aggregation floor of 3 \u2014 so it is shown here for context but is excluded from every alert by `and on(pool) (turnaround_pool_headcount >= 3))`."
+        "content": "**Hours per rostered artist per week, by pool.** The forecastable half of crunch.\n\nEvery panel on this board except the last one carries the aggregation floor *in its query* \u2014 `and on(pool) (max by (pool) (turnaround_pool_headcount) >= 3)` \u2014 so a pool of fewer than three people cannot appear in an aggregate here even by accident. `di-pool-1` is two people; it shows only in the panel at the bottom, which is labelled internal-only for exactly that reason."
       }
     },
     {
@@ -143,7 +143,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Weekly hours by pool",
+      "title": "Weekly hours by pool (pools of 3+)",
       "description": "A 40 h line is the plan; 60 h is unsustainable by the studio's own account.",
       "datasource": {
         "type": "prometheus",
@@ -208,7 +208,7 @@
             "uid": "grafanacloud-prom"
           },
           "editorMode": "code",
-          "expr": "max by (pool) (turnaround_artist_hours_logged)",
+          "expr": "max by (pool) (turnaround_artist_hours_logged) and on(pool) (max by (pool) (turnaround_pool_headcount) >= 3)",
           "legendFormat": "{{pool}}",
           "range": true,
           "instant": false,
@@ -271,7 +271,7 @@
     },
     {
       "type": "table",
-      "title": "Rostered headcount",
+      "title": "Rostered headcount (pools of 3+)",
       "description": "Join key for the floor. Not a load signal.",
       "datasource": {
         "type": "prometheus",
@@ -313,7 +313,60 @@
             "uid": "grafanacloud-prom"
           },
           "editorMode": "code",
-          "expr": "max by (pool) (turnaround_pool_headcount)",
+          "expr": "max by (pool) (turnaround_pool_headcount) and on(pool) (max by (pool) (turnaround_pool_headcount) >= 3)",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true,
+          "refId": "A",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Below the aggregation floor \u2014 internal only, never share this panel",
+      "description": "The pools too small to aggregate safely. Kept for roster context inside the studio, where the viewer is already authenticated and already knows who is on the show. Everything above this panel is floor-safe by query, so the rest of this board could be shared; this panel is why it is not. The agent is forbidden from naming these pools (bridge/privacy.py), and the public control room at /api/backend cannot reach them.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "editorMode": "code",
+          "expr": "max by (pool) (turnaround_pool_headcount) < 3",
           "legendFormat": "__auto",
           "range": false,
           "instant": true,

@@ -136,11 +136,22 @@ concurrency. `GET /api/capacity` says what is left. The counters are per
 instance, which the module is explicit about rather than implying they are
 global.
 
+The page also shows the *other* side: `GET /api/backend`
+([`agent/backend.py`](agent/backend.py)) renders the live Grafana Cloud signal
+the agents read, next to the PromQL and LogQL that produced each number. It is a
+fixed board, not a query API — the browser sends no parameters, so there is
+nothing for a visitor to steer — and the crew figure carries the aggregation
+floor in its own PromQL rather than in a promise. One upstream query serves
+every viewer, which is why this exists instead of a natively shared dashboard:
+a public Grafana board runs every panel for every anonymous visitor against the
+owner's quota, so a link on a submission page becomes a way to spend someone
+else's bill.
+
 ## Running it
 
 ```bash
 uv sync --group dev
-uv run pytest            # 387 tests, offline: no network, no credentials
+uv run pytest            # 409 tests, offline: no network, no credentials
 uv run ruff check .
 ```
 

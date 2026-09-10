@@ -276,8 +276,11 @@ def test_ask_returns_the_documented_json_shape(offline):
         "/ask", json={"question": "why is SEQ0420 slipping?", "observability": False}).json()
 
     assert set(body) == {"answer", "timeline", "evaluation", "response_id",
-                         "circuit_breaker_tripped", "halted_by", "halt_detail",
-                         "grafana_url"}
+                         "circuit_breaker_tripped", "halted_by", "halt_detail"}
+    # `grafana_url` used to be here. Nothing rendered it, and a public endpoint
+    # handing every caller the stack hostname is a free pointer at its login
+    # page -- `/api/backend` shows the data without naming where it lives.
+    assert "grafana_url" not in body
     assert body["halted_by"] is None
     assert body["answer"].startswith("Answer: SEQ0420")
     assert body["circuit_breaker_tripped"] is False
@@ -362,7 +365,8 @@ def test_the_page_only_calls_endpoints_that_exist():
     """
     html = (REPO_ROOT / "web" / "index.html").read_text()
     referenced = set(re.findall(r'(?:fetch\(|src=|href=)"(/[\w./-]*)"', html))
-    assert {"/ask", "/api/capacity", "/banner.png"} <= referenced, "expected calls missing"
+    assert {"/ask", "/api/capacity", "/api/backend",
+            "/banner.png"} <= referenced, "expected calls missing"
 
     routes = {getattr(r, "path", None) for r in serve_mod.app.routes}
     for path in referenced:

@@ -9,6 +9,7 @@ behind one endpoint so a demo (or a CI probe) can hit a URL:
 
     GET  /healthz   -> {"status": "ok", "vertex_ready": true, "grafana_ready": true}
     GET  /          -> what this service is and how to call it (HTML or JSON)
+    GET  /api/backend -> the live Grafana signal the agents read (`agent/backend.py`)
 
 Writes are always auto-denied here (``AutoApprover(approve=False)``) -- a public
 endpoint must never be able to mutate Kitsu or Grafana. Run the CLI with
@@ -30,7 +31,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from agent import engine
+from agent import backend, engine
 from agent.approval import AutoApprover
 from agent.config import REPO_ROOT
 from agent.config import settings as load_settings
@@ -70,6 +71,7 @@ SERVICE = {
         "GET /": "the playground, in a browser",
         "GET /health": "liveness and resolved configuration",
         "GET /api/capacity": "what the demo's daily budget has left",
+        "GET /api/backend": "the live Grafana signal the agents read, as numbers",
         "POST /ask": 'ask a question: {"question": "why is SEQ0420 slipping?"}',
         "GET /docs": "OpenAPI / Swagger UI",
     },
@@ -117,6 +119,27 @@ def capacity() -> dict:
     """What the demo has left, so the page can say so before someone types a
     question and waits a minute to be told no."""
     return gate.snapshot()
+
+
+@app.get("/api/backend", response_model=None)
+def backend_view(response: Response) -> dict | JSONResponse:
+    """The control-room strip: what the agents read, without an account.
+
+    Sync on purpose. The Grafana call is blocking `requests`, so FastAPI runs
+    this in its threadpool; making it `async` would park the whole event loop
+    on a socket that another service controls.
+
+    `max-age=30` matches the server-side cache, so a browser that reloads twice
+    in a second does not even ask.
+    """
+    try:
+        board = backend.view(load_settings())
+    except backend.BackendUnavailable:
+        # The detail names the stack -- log-worthy, not response-worthy.
+        return JSONResponse(status_code=503,
+                            content={"error": "the backend view is unavailable"})
+    response.headers["Cache-Control"] = "public, max-age=30"
+    return board
 
 
 # Two paths, one handler. Google Frontend swallows the exact path `/healthz` on
@@ -191,7 +214,10 @@ async def ask_endpoint(req: AskRequest, request: Request, response: Response) ->
         # quota refusal is a halt too, and it must not read as an empty answer.
         "halted_by": outcome.halt.kind if outcome.halt is not None else None,
         "halt_detail": outcome.halt.render() if outcome.halt is not None else "",
-        "grafana_url": outcome.settings.grafana_url,
+        # Deliberately absent: `grafana_url`. Nothing rendered it, and a public
+        # endpoint handing every caller the stack hostname is a free pointer at
+        # the login page for anyone scraping the demo. `/api/backend` shows the
+        # data without naming where it lives.
     }
 
 
