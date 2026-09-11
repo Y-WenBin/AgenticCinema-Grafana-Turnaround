@@ -120,6 +120,13 @@ fi
 # impossible here regardless -- serve.py runs AutoApprover(approve=False), and
 # a test enforces it. --max-instances caps the blast radius of an open endpoint;
 # TURNAROUND_MAX_LLM_CALLS caps the spend of any single request.
+#
+# --min-instances 1 keeps one container warm. A cold start is 8.6s (measured:
+# instance start to "Application startup complete", twice), which lands on the
+# first visitor after ~15 minutes of idle -- exactly the visitor a demo cannot
+# afford to make wait. It is not free: one always-on 2vCPU/2GiB instance is
+# roughly $14/month whether anyone visits or not. Set MIN_INSTANCES=0 to trade
+# that back for the cold start.
 echo "==> deploying service $SERVICE"
 gcloud run deploy "$SERVICE" \
   --image "$IMAGE" \
@@ -128,7 +135,7 @@ gcloud run deploy "$SERVICE" \
   --set-env-vars "$ENV_VARS" \
   --set-secrets "$SECRETS" \
   --cpu 2 --memory 2Gi --timeout 300 --concurrency 4 \
-  --min-instances 0 --max-instances "${MAX_INSTANCES:-2}" \
+  --min-instances "${MIN_INSTANCES:-1}" --max-instances "${MAX_INSTANCES:-2}" \
   --allow-unauthenticated
 
 # --- the re-seed job -----------------------------------------------------
