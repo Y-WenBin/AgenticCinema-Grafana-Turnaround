@@ -22,17 +22,23 @@ from agent.config import REPO_ROOT
 #: Placeholders and test doubles. `stack.grafana.net` is the fixture hostname
 #: the suite uses everywhere; `<name>`/`<your-stack>`/`YOUR_PROJECT_ID` are what
 #: the docs tell a reader to replace.
-_ALLOWED_HOSTS = {"stack.grafana.net", "otlp-gateway-prod-<region>.grafana.net"}
+_ALLOWED_HOSTS = {
+    "stack.grafana.net",                      # the suite's fixture hostname
+    "otlp-gateway-prod-<region>.grafana.net", # the docs' placeholder
+    "quietfalcon9931.grafana.net",            # invented; see the detector test
+}
 
-#: Documented example values, not anybody's real project.
-_ALLOWED_PROJECTS = {"other-proj"}
+#: Documented example values and invented fixtures, not anybody's real project.
+#: Every literal that is permitted to look real is named here -- the allowlist
+#: is the control, and adding to it should feel like a decision.
+_ALLOWED_PROJECTS = {"other-proj", "amber-meadow-114829-k2"}
 
 _GRAFANA_HOST = re.compile(r"\b([A-Za-z0-9][\w-]*)\.grafana\.net\b")
 #: A Google Cloud project id where one is actually being *supplied*: an
 #: assignment, a `--project` flag, or a backticked value. Prose containing the
 #: word "project" is not a leak, so the context has to be narrow. The value must
-#: also be hyphenated, which every real project id is ("your-project-id")
-#: and ordinary English words are not.
+#: also be hyphenated, which every real GCP project id is and ordinary English
+#: words are not.
 _GCP_PROJECT = re.compile(
     r"(?:GOOGLE_CLOUD_PROJECT|PROJECT_ID|--project[= ]|project[= ]+`)"
     r"[=\s:`\"']*([a-z][a-z0-9-]{4,28}[a-z0-9])\b")
@@ -78,8 +84,6 @@ def test_no_real_grafana_stack_hostname_is_committed(tracked):
 def test_no_real_gcp_project_id_is_committed(tracked):
     found = {}
     for rel, text in tracked:
-        if rel == __file__.split("/")[-1] or rel.endswith("test_no_deployment_identifiers.py"):
-            continue
         for match in _GCP_PROJECT.finditer(text):
             pid = match.group(1)
             if _PLACEHOLDER.match(pid) or "-" not in pid or pid in _ALLOWED_PROJECTS:
@@ -123,18 +127,25 @@ def test_the_datasource_id_is_resolved_not_assumed(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
-def test_the_detectors_catch_the_strings_that_actually_leaked():
-    """A scrub test that cannot fail is worse than no scrub test. These are the
-    two real values this repo published (in `grafana/ml/jobs.json`, `PROJECT.md`
-    and `docs/CODE_REVIEW.md`) before they were removed -- the detectors above
-    must still recognise them."""
-    leaked_host = "https://" + "your-stack" + ".grafana.net"
-    match = _GRAFANA_HOST.search(leaked_host)
-    assert match and match.group(0) not in _ALLOWED_HOSTS
+def test_the_detectors_catch_a_realistic_leak():
+    """A scrub test that cannot fail is worse than no scrub test.
+
+    The fixtures below are *invented*, deliberately: writing the values this
+    repo actually published into a test file would re-commit them, and a
+    detector that only recognises one known string is a blocklist, not a rule.
+    These have the same shape -- Grafana Cloud's two-word-plus-digits stack
+    names, and a GCP project id with its auto-appended suffix -- which is why
+    the scanners above flag them, and why both are named in the allowlists at
+    the top of this file. That allowlist is the actual control: every literal
+    permitted to look real is written down in one place.
+    """
+    match = _GRAFANA_HOST.search("https://quietfalcon9931.grafana.net")
+    assert match, "the hostname detector no longer matches a real stack name"
+    # The shape check the scanner relies on: a real stack name must not look
+    # like a placeholder, or every leak would be waved through as one.
     assert not _PLACEHOLDER.match(match.group(1))
 
-    leaked_project = "GOOGLE_CLOUD_PROJECT=" + "your-project-id"
-    match = _GCP_PROJECT.search(leaked_project)
+    match = _GCP_PROJECT.search("GOOGLE_CLOUD_PROJECT=amber-meadow-114829-k2")
     assert match, "the project-id detector no longer matches an assignment"
     pid = match.group(1)
-    assert "-" in pid and not _PLACEHOLDER.match(pid) and pid not in _ALLOWED_PROJECTS
+    assert "-" in pid and not _PLACEHOLDER.match(pid)
