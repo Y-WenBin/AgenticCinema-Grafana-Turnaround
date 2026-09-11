@@ -5,15 +5,30 @@ then synthesise", it routinely stops after one and echoes it. So the shape is
 deterministic instead of model-decided:
 
     SequentialAgent(producer):
-      1. schedule_analyst   -> state["schedule_findings"]
-      2. farm_analyst       -> state["farm_findings"]
-      3. crunch_guardian    -> state["crunch_findings"]
-      4. remediator         -> state["remediation_result"]   (writes are gated)
-      5. synthesis          -> the final Answer / Evidence / Remediation block
+      1. ParallelAgent(analysts)                             (concurrent)
+           schedule_analyst -> state["schedule_findings"]
+           farm_analyst     -> state["farm_findings"]
+           crunch_guardian  -> state["crunch_findings"]
+      2. remediator         -> state["remediation_result"]   (writes are gated)
+      3. synthesis          -> the final Answer / Evidence / Remediation block
 
 Every question runs the whole board. It costs a few extra flash calls per run
 and buys a demo that behaves the same way every take (PROJECT.md, "Risks",
-"agent non-determinism on camera"). The evidence ledger the approval gate shows
+"agent non-determinism on camera").
+
+The three analysts are *concurrent* because they are genuinely independent: each
+reads a different plane of the stack, writes its own ``output_key``, and reads
+none of the others. Run one after another they were the bulk of the wall clock
+-- measured against the live stack, the analyst phase alone was ~42s of a ~90s
+run, almost all of it waiting on Gemini rather than on Grafana. Fanned out, the
+phase costs whatever the slowest analyst costs. The remediator still runs after
+them, because it reasons about what they found, and synthesis still runs last.
+
+Order is the only thing the fan-out gives up. The tool timeline now interleaves
+the three analysts' calls instead of grouping them, which is what actually
+happened; ``ToolTimeline`` already tolerated it, because ADK issues one agent's
+tool calls concurrently too (a single analyst turn routinely fires five queries
+at once). The evidence ledger the approval gate shows
 is filled by each analyst's ``after_agent_callback``, not by a coordinator
 remembering to call a tool.
 
@@ -28,12 +43,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from google.adk.agents import LlmAgent, SequentialAgent
+from google.adk.agents import LlmAgent, ParallelAgent, SequentialAgent
 
 from agent.analysts import crunch_guardian, farm_analyst, schedule_analyst
 from agent.approval import ApprovalGate, Approver, AutoApprover, EvidenceLedger
 from agent.config import Settings, bootstrap_vertex
 from agent.remediator import remediator
+from agent.thinking import planner
 from agent.timeline import ToolTimeline
 from agent.writeback import KitsuWriteBack
 
@@ -103,15 +119,24 @@ def build_system(
         model=cfg.analyst_model,
         description="Writes the final Answer / Evidence / Remediation block from the specialists' outputs.",
         instruction=SYNTHESIS_ROLE,
+        planner=planner(cfg.thinking_budget),
     )
 
-    producer = SequentialAgent(
-        name="producer",
-        description="Runs the schedule, farm and crunch analysts, then the gated remediator, then synthesises.",
+    analysts = ParallelAgent(
+        name="analysts",
+        description="Reads the creative, compute and crew planes at the same time.",
         sub_agents=[
             schedule_analyst(cfg, timeline, ledger),
             farm_analyst(cfg, timeline, ledger),
             crunch_guardian(cfg, timeline, ledger),
+        ],
+    )
+
+    producer = SequentialAgent(
+        name="producer",
+        description="Runs the schedule, farm and crunch analysts together, then the gated remediator, then synthesises.",
+        sub_agents=[
+            analysts,
             remediator(cfg, timeline, gate, writeback=writeback),
             synthesis,
         ],

@@ -18,6 +18,7 @@ from google.adk.tools import FunctionTool
 from agent.approval import ApprovalGate
 from agent.config import Settings
 from agent.mcp_grafana import remediator_toolset
+from agent.thinking import planner
 from agent.timeline import TimelineRecorder, ToolTimeline
 from agent.vocabulary import shared_context
 from agent.writeback import KitsuWriteBack, default_writeback, make_write_back_tool
@@ -91,6 +92,7 @@ def remediator(
             f"{shared_context(cfg.ds_prom, cfg.ds_loki, cfg.ds_tempo)}"
             f"\n\n---\n\nYOUR ROLE\n{REMEDIATOR_ROLE}"
         ),
+        planner=planner(cfg.thinking_budget),
         tools=[remediator_toolset(cfg), wb_tool],
         before_tool_callback=before_tool,
         after_tool_callback=after_tool,

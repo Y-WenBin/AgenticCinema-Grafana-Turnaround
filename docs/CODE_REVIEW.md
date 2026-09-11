@@ -225,8 +225,11 @@ is no longer indistinguishable from "the agent had nothing to say".
 
 ## Live verification — 2026-09-09
 
-Against Grafana Cloud stack `your-stack` (`prod-ap-southeast-1`) and Vertex
-project `your-project-id` (`us-central1`), after `seed.populate`.
+Against a live Grafana Cloud stack and a live Vertex AI project, after
+`seed.populate`. The stack and project are deliberately not named here: they are
+not secrets, but publishing them in a public repo hands a scraper a login page
+and an OTLP endpoint to aim at, and `agent/serve.py` already withholds the same
+hostname from every `/ask` response for exactly that reason.
 
 | Part 6 | Result |
 |---|---|

@@ -29,6 +29,8 @@ import sys
 import time
 from datetime import UTC, datetime
 
+from bridge.dotenv import load_env
+
 
 def _seed() -> bool:
     started = datetime.now(UTC)
@@ -45,6 +47,9 @@ def _seed() -> bool:
 
 
 def main() -> None:
+    # Load `.env` first, so this entry point needs no `set -a && source .env`
+    # incantation. A real exported variable still wins (bridge/dotenv.py).
+    load_env()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--interval", type=float, default=15, metavar="MINUTES")
     ap.add_argument("--once", action="store_true", help="seed once and exit")

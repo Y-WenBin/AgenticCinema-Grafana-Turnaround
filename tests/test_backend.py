@@ -303,7 +303,11 @@ def test_the_public_board_reads_the_same_narrowed_stream():
 # the page, and what it stopped saying
 # --------------------------------------------------------------------------- #
 
-PAGE = (REPO_ROOT / "web" / "index.html").read_text()
+# The playground is two files now -- the markup, and the script the CSP made
+# a separate file (agent/serve.py::SECURITY_HEADERS). Scan both: which half a
+# given string lives in is an implementation detail of the page.
+PAGE = ((REPO_ROOT / "web" / "index.html").read_text()
+        + (REPO_ROOT / "web" / "app.js").read_text())
 
 
 def test_the_answer_no_longer_ships_the_stack_hostname():

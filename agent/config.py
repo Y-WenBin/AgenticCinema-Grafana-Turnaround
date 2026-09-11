@@ -17,32 +17,18 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+from bridge.dotenv import REPO_ROOT
+from bridge.dotenv import load_env as _load_env
 
 # --------------------------------------------------------------------------- #
 # .env loading -- stdlib only, real environment always wins
 # --------------------------------------------------------------------------- #
 
 
-def load_env(path: Path | None = None) -> None:
-    """Populate ``os.environ`` from ``.env`` for keys that are not already set.
-
-    A real exported variable (CI, Cloud Run, ``set -a && . ./.env``) is never
-    overwritten. Lines are ``KEY=VALUE``; ``#`` comments and blanks are skipped;
-    surrounding quotes on the value are stripped. No interpolation -- values are
-    taken literally, which is what an OTLP auth header needs.
-    """
-    env_path = path or REPO_ROOT / ".env"
-    if not env_path.is_file():
-        return
-    for raw in env_path.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
+#: ``.env`` loading lives in ``bridge/`` so ``seed.*`` and ``grafana.*`` can use
+#: it too (see that module). Re-exported here because this is where the rest of
+#: the agent tier -- and the tests -- have always imported it from.
+load_env = _load_env
 
 
 # --------------------------------------------------------------------------- #
@@ -73,13 +59,55 @@ DEFAULT_ASKS_PER_HOUR = 8       # per visitor: enough to explore, not to farm
 DEFAULT_ASKS_PER_DAY = 200      # everyone together: the actual budget
 DEFAULT_CONCURRENT_ASKS = 2     # a run holds an MCP subprocess for ~40s
 
+#: Gemini 2.5 thinking budget, in tokens, for every agent in the pipeline.
+#:
+#: This is the single biggest lever on wall-clock. ``gemini-2.5-flash`` defaults
+#: to *dynamic* thinking (budget -1). Measured end to end against the live
+#: stack, same code, same question, only this knob changed:
+#:
+#:     budget -1 (dynamic)   75.4s, 60.7s     6/6 scorecard checks pass
+#:     budget  0 (off)       24.5s, 18.5s     6/6 scorecard checks pass
+#:
+#: Roughly 3x, for no measured loss of answer quality.
+#:
+#: Zero is the right default *for this pipeline specifically*, because none of
+#: the five agents is doing open-ended reasoning: the analysts are handed
+#: finished PromQL recipes (``agent/vocabulary.py``) and asked to run them and
+#: report the numbers, and the synthesis agent is forbidden from deriving
+#: anything the specialists did not already compute. The work is retrieval and
+#: formatting, which is exactly what thinking does not help with. The scorecard
+#: (``agent/evaluation.py``) is the regression guard: if a future prompt does
+#: need reasoning, its grounding checks go red and this knob comes back up.
+#:
+#:   0   -- off (default)
+#:   -1  -- dynamic, the Gemini default; let the model decide
+#:   >0  -- a hard ceiling in thinking tokens
+DEFAULT_THINKING_BUDGET = 0
+
 
 def _int_env(name: str, default: int) -> int:
+    """A positive integer from the environment, or ``default``."""
     try:
         value = int(os.environ.get(name, "").strip())
         return value if value > 0 else default
     except (TypeError, ValueError):
         return default
+
+
+def _signed_int_env(name: str, default: int) -> int:
+    """Like :func:`_int_env`, but 0 and -1 are meaningful values, not rejects.
+
+    The thinking budget needs all three of "off" (0), "dynamic" (-1) and "at
+    most N", so it cannot use the positive-only parser the rate limits do.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value >= -1 else default
 
 
 # --------------------------------------------------------------------------- #
@@ -129,6 +157,9 @@ class Settings:
     asks_per_hour: int = DEFAULT_ASKS_PER_HOUR
     asks_per_day: int = DEFAULT_ASKS_PER_DAY
     concurrent_asks: int = DEFAULT_CONCURRENT_ASKS
+    #: Gemini thinking budget in tokens: 0 off, -1 dynamic, >0 a ceiling.
+    #: See DEFAULT_THINKING_BUDGET -- this is the main wall-clock lever.
+    thinking_budget: int = DEFAULT_THINKING_BUDGET
 
     @property
     def grafana_ready(self) -> bool:
@@ -186,6 +217,8 @@ def settings() -> Settings:
         asks_per_hour=_int_env("TURNAROUND_ASKS_PER_HOUR", DEFAULT_ASKS_PER_HOUR),
         asks_per_day=_int_env("TURNAROUND_ASKS_PER_DAY", DEFAULT_ASKS_PER_DAY),
         concurrent_asks=_int_env("TURNAROUND_CONCURRENT_ASKS", DEFAULT_CONCURRENT_ASKS),
+        thinking_budget=_signed_int_env("TURNAROUND_THINKING_BUDGET",
+                                        DEFAULT_THINKING_BUDGET),
     )
 
 

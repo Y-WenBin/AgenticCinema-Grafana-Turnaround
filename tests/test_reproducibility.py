@@ -284,19 +284,30 @@ def test_prompts_never_point_at_an_unfilterable_tool():
 
 
 def test_pipeline_runs_each_step_exactly_once():
-    """Edge (infinite loop): a SequentialAgent cannot loop -- five sub-agents,
-    each run once, then it terminates."""
-    from google.adk.agents import SequentialAgent
+    """Edge (infinite loop): neither shell agent can loop. Three ordered stages,
+    the first of which fans three analysts out once each, then it terminates.
+
+    Parallelising the analysts changed the tree's depth, not this property: a
+    ParallelAgent runs each sub-agent exactly once too, and no agent appears
+    twice anywhere in the tree.
+    """
+    from google.adk.agents import ParallelAgent, SequentialAgent
 
     from agent.approval import AutoApprover
     from agent.producer import build_system
 
     system = build_system(approver=AutoApprover(approve=False), settings=_cfg())
     assert isinstance(system.producer, SequentialAgent)
-    names = [a.name for a in system.producer.sub_agents]
-    assert names == ["schedule_analyst", "farm_analyst", "crunch_guardian",
-                     "remediator", "synthesis"]
-    assert len(names) == len(set(names))
+    stages = [a.name for a in system.producer.sub_agents]
+    assert stages == ["analysts", "remediator", "synthesis"]
+
+    analysts = system.producer.sub_agents[0]
+    assert isinstance(analysts, ParallelAgent)
+    assert [a.name for a in analysts.sub_agents] == [
+        "schedule_analyst", "farm_analyst", "crunch_guardian"]
+
+    every = [a.name for a in analysts.sub_agents] + stages[1:]
+    assert len(every) == len(set(every))
 
 
 # --------------------------------------------------------------------------- #

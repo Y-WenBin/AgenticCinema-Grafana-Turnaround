@@ -16,6 +16,7 @@ from google.adk.agents import LlmAgent
 from agent.approval import EvidenceLedger
 from agent.config import Settings
 from agent.mcp_grafana import CRUNCH_TOOLS, FARM_TOOLS, SCHEDULE_TOOLS, analyst_toolset
+from agent.thinking import planner
 from agent.timeline import TimelineRecorder, ToolTimeline
 from agent.vocabulary import FLOOR, shared_context
 
@@ -66,6 +67,7 @@ def _analyst(*, name: str, description: str, role: str, tool_filter, cfg: Settin
         description=description,
         instruction=f"{context}\n\n---\n\nYOUR ROLE\n{role}",
         tools=[analyst_toolset(cfg, tool_filter)],
+        planner=planner(cfg.thinking_budget),
         before_tool_callback=before,
         after_tool_callback=after,
         output_key=output_key,

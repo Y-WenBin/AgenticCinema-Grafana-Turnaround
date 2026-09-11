@@ -41,9 +41,10 @@ the test.
    `tests/test_config.py` fails the build if you do. Add settings to
    `Settings` in `agent/config.py`; that is the only channel.
 6. **The suite is offline.** No network, no credentials, no `mcp-grafana`
-   binary, no `.env`. An autouse fixture in `tests/conftest.py` refuses to build
-   a live Vertex client; a test that wants the LLM judge injects its own
-   `generate`.
+   binary, no `.env`. Autouse fixtures in `tests/conftest.py` refuse to build a
+   live Vertex client and point `load_env` at an empty directory, so a
+   developer's real `.env` can never make a test pass. A test that wants the LLM
+   judge injects its own `generate`.
 7. **Bounded cost.** Every run passes `RunConfig(max_llm_calls=…)`. ADK's own
    default is 500, which is enough for a stuck retry loop to cost real money.
 8. **The ontology is defined once.** `bridge/ontology.py` owns metric names,
@@ -65,7 +66,7 @@ studio tools  →  the simulated →  dashboards,    →  the ADK      +   the a
 
 | Directory | Owns | Depends on |
 |---|---|---|
-| `bridge/` | The ontology, the farm-name join, the privacy floor, OTLP emission | nothing in this repo |
+| `bridge/` | The ontology, the farm-name join, the privacy floor, OTLP emission, `.env` loading | nothing in this repo |
 | `seed/` | The generated show; the driver that pushes it into Grafana Cloud | `bridge/` |
 | `grafana/` | Dashboards, alert rules, ML jobs, and one idempotent provisioner | `bridge/` (metric names) |
 | `agent/` | The multi-agent pipeline, MCP toolsets, approval gate, judge tier | `bridge/`, `observability/` |
@@ -91,15 +92,15 @@ patch point and names the layer at each call site. Keep it that way.
 
 ```bash
 uv sync --group dev
-uv run pytest -q          # 361 tests, offline
+uv run pytest -q          # 446 tests, offline
 uv run ruff check .
 ```
 
 Anything live needs a filled-in `.env` (see `.env.example` and `docs/SETUP.md`).
-`seed.*` and `grafana.*` do **not** load `.env` themselves; the agent tier does.
+Every entry point loads it itself, via `bridge/dotenv.py`; a variable already
+exported in the shell always wins.
 
 ```bash
-set -a && source .env && set +a
 uv run python -m seed.populate --dry-run     # exercises the full write path, no network
 uv run python -m seed.populate               # writes several thousand series
 uv run python -m grafana.provision           # idempotent

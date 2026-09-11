@@ -99,14 +99,15 @@ def instrumentation(enabled: bool):
         return None
 
 
-def judge_generator(enabled: bool, model: str) -> Callable[[str], str] | None:
+def judge_generator(enabled: bool, model: str,
+                   thinking_budget: int = 0) -> Callable[[str], str] | None:
     """A Vertex-backed ``generate`` for the LLM judge, or None if unavailable."""
     if not enabled:
         return None
     try:
         from agent.evaluation import vertex_generator
 
-        return vertex_generator(model)
+        return vertex_generator(model, thinking_budget)
     except Exception as exc:  # noqa: BLE001
         print(f"(LLM judge off: {exc})", file=sys.stderr)
         return None
@@ -213,7 +214,8 @@ async def answer_question(
             question=question, answer=outcome.answer, timeline=system.timeline,
             ledger=system.ledger, response_id=outcome.response_id,
             telemetry=obs.telemetry if obs is not None else None,
-            llm_generate=judge_generator(evaluate, cfg.analyst_model),
+            llm_generate=judge_generator(evaluate, cfg.analyst_model,
+                                         cfg.thinking_budget),
         )
         if obs is not None:
             obs.flush()

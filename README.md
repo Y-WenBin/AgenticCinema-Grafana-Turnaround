@@ -114,7 +114,7 @@ Analysts are read-only *by construction*, not by prompt — they are wired to an
 **[turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app)** —
 a playground with the four questions verified against the live stack. Ask one and
 you get the answer, the judge scorecard, and the full tool timeline showing the
-PromQL, LogQL and TraceQL the agents actually wrote. A run takes 30–90 seconds
+PromQL, LogQL and TraceQL the agents actually wrote. A run takes 20–40 seconds
 because it is really running.
 
 No auth, nothing to install. Same thing from a terminal:
@@ -151,14 +151,13 @@ else's bill.
 
 ```bash
 uv sync --group dev
-uv run pytest            # 409 tests, offline: no network, no credentials
+uv run pytest            # 446 tests, offline: no network, no credentials
 uv run ruff check .
 ```
 
 Ask the agent a question (needs a filled-in `.env` — copy `.env.example`; [`docs/SETUP.md`](docs/SETUP.md) walks through Grafana Cloud and Vertex):
 
 ```bash
-set -a && source .env && set +a
 uv run python -m seed.populate
 uv run python -m grafana.provision
 uv run python -m agent.run "Why is SEQ0420 slipping, and what is it costing in artist-days?"

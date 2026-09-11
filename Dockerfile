@@ -44,5 +44,18 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     PORT=8080
 EXPOSE 8080
 
+# Non-root. Cloud Run's gVisor sandbox already bounds the blast radius, so this
+# is defence in depth rather than the only wall -- but the process reads a
+# service-account token out of the environment and spawns `mcp-grafana` as a
+# subprocess, and neither needs uid 0 to do it.
+#
+# /app is left owned by root and merely readable: nothing at runtime writes into
+# the image, and a read-only application directory means a compromised process
+# cannot rewrite its own code. `agent/_writeback.jsonl` is a CLI-only path
+# (`--approve`), never reached by `agent/serve.py`, which runs
+# AutoApprover(approve=False).
+RUN useradd --system --create-home --uid 10001 turnaround
+USER turnaround
+
 # Cloud Run's SIGTERM: uvicorn handles graceful shutdown itself.
 CMD ["python", "-m", "agent.serve"]

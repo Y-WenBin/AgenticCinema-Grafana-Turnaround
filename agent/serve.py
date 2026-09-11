@@ -37,10 +37,103 @@ from agent.config import REPO_ROOT
 from agent.config import settings as load_settings
 from agent.engine import HostedMcpNotAuthorized, NotConfigured
 from agent.limits import Gatekeeper, client_id
+from bridge.dotenv import load_env
 
-app = FastAPI(title="Turnaround agent", version="0.1.0")
+# --------------------------------------------------------------------------- #
+# Interactive API docs
+# --------------------------------------------------------------------------- #
+
+#: `/docs`, `/redoc` and `/openapi.json` enumerate every endpoint and schema.
+#: That is genuinely useful for a reviewer poking at the demo and needless
+#: attack surface anywhere else, so it is one switch rather than a judgement
+#: call: on by default, off by setting TURNAROUND_PUBLIC_DOCS to a falsey value.
+#:
+#: FastAPI only honours these three at construction, so unlike every other knob
+#: this one cannot live on `Settings` -- by the time `settings()` is called the
+#: app already exists. Hence the explicit `load_env()` first: without it this
+#: would read the environment *before* `.env` is loaded, and a
+#: `TURNAROUND_PUBLIC_DOCS=0` set only in `.env` would be silently ignored --
+#: the exact failure mode `agent/config.py`'s module-constant guard exists to
+#: prevent. `load_env` is idempotent and never overwrites a real variable, so
+#: calling it here changes nothing for Cloud Run, which sets the environment
+#: directly.
+load_env()
+_DOCS = os.environ.get("TURNAROUND_PUBLIC_DOCS", "1").strip().lower() \
+    not in {"0", "false", "no", "off"}
+
+app = FastAPI(
+    title="Turnaround agent",
+    version="0.1.0",
+    docs_url="/docs" if _DOCS else None,
+    redoc_url="/redoc" if _DOCS else None,
+    openapi_url="/openapi.json" if _DOCS else None,
+)
 
 WEB = REPO_ROOT / "web"
+
+# --------------------------------------------------------------------------- #
+# Security headers
+# --------------------------------------------------------------------------- #
+
+#: Sent on every response.
+#:
+#: The CSP is the point. The page's rendering is careful -- `esc()` on every
+#: interpolation and `textContent` for the answer -- but several `innerHTML`
+#: sinks render `/ask` and `/api/backend` data, and some of that is downstream
+#: of model and tool output. `esc()` is the wall; this is the second wall, for
+#: the day the first one has a gap. It only buys anything without
+#: `unsafe-inline` on `script-src`, which is why `web/app.js` is a separate file
+#: rather than an inline `<script>`.
+#:
+#: `style-src` does keep `unsafe-inline`: the page sets a couple of element
+#: styles from script, and inline *style* cannot execute script.
+#:
+#: Everything is same-origin -- no CDN, no font host, no analytics -- so
+#: `default-src 'self'` costs nothing and `connect-src 'self'` pins `/ask` and
+#: `/api/*` to this origin.
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "font-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'none'; "
+        "form-action 'none'; "
+        "frame-ancestors 'none'"
+    ),
+    # The page can carry a question a visitor typed. Nothing downstream needs to
+    # know where they came from, so send no referrer at all.
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    # frame-ancestors above is the modern control; this is for anything that
+    # still only understands the header.
+    "X-Frame-Options": "DENY",
+    # No geolocation, camera, mic or FLoC from a page that asks one question.
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=(), interest-cohort=()",
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Apply :data:`SECURITY_HEADERS` to every response, errors included.
+
+    A middleware rather than per-route headers: a 404, a 429 from the rate
+    limiter and a 500 all render in the same browser, and a header that is only
+    right on the happy path is not a control.
+
+    `setdefault` semantics: a route that has already set a header wins. Nothing
+    does today, and if something ever needs to relax the CSP for one response,
+    it should be able to say so at the route.
+    """
+    response = await call_next(request)
+    for name, value in SECURITY_HEADERS.items():
+        if name not in response.headers:
+            response.headers[name] = value
+    return response
+
 
 #: Built once per process, from the same settings everything else reads. The
 #: counters live here, so they are per instance -- `agent/limits.py` explains
@@ -73,7 +166,9 @@ SERVICE = {
         "GET /api/capacity": "what the demo's daily budget has left",
         "GET /api/backend": "the live Grafana signal the agents read, as numbers",
         "POST /ask": 'ask a question: {"question": "why is SEQ0420 slipping?"}',
-        "GET /docs": "OpenAPI / Swagger UI",
+        # Advertised only when it is actually mounted -- a directory naming a
+        # 404 is worse than one that is honestly shorter.
+        **({"GET /docs": "OpenAPI / Swagger UI"} if _DOCS else {}),
     },
     "example": (
         "curl -s -H 'content-type: application/json' "
@@ -106,6 +201,14 @@ def banner() -> FileResponse:
     every chat client and submission page renders from `og:image`."""
     return FileResponse(WEB / "banner.png", media_type="image/png",
                         headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/app.js", include_in_schema=False)
+def app_js() -> FileResponse:
+    """The playground's script. A separate file so the CSP can refuse inline
+    script -- see SECURITY_HEADERS."""
+    return FileResponse(WEB / "app.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.get("/favicon.svg", include_in_schema=False)

@@ -226,14 +226,40 @@ def _parse_json_object(text: str) -> dict:
         return {}
 
 
-def vertex_generator(model: str) -> Callable[[str], str]:
-    """A ``generate`` backed by Vertex Gemini. Lazy so imports stay cheap."""
+def vertex_generator(model: str, thinking_budget: int = 0) -> Callable[[str], str]:
+    """A ``generate`` backed by Vertex Gemini. Lazy so imports stay cheap.
+
+    The judge gets the same thinking budget as the rest of the pipeline
+    (``agent/thinking.py``). It is the *last* model call in a run, with the
+    supervisor already waiting on an answer that is already finished, so seconds
+    spent here are the most visible seconds in the whole request.
+
+    Judging *is* a reasoning task, so unlike the analysts this tier was measured
+    on its own -- same answer, same timeline digest, five runs each:
+
+        budget    0   1.5s   hallucination 1.0, 0.8, 1.0, 0.8, 0.8
+        budget 1024   5.8s   hallucination 0.5, 0.5, 0.5, 0.5, 0.6
+
+    Thinking does not make the judge *better* here, it makes it stricter and
+    four seconds slower. That matters beyond latency: the alert in
+    ``grafana/alerts/rules.json`` fires when the mean hallucination score over
+    an hour drops below 0.80, so a thinking judge would hold this stack
+    permanently in alarm. Raising the budget means re-calibrating that
+    threshold, not just paying for the time.
+
+    The regression guard is ``DeterministicJudge`` either way: it is code
+    checking the answer against known ground truth, with no model in it, and no
+    budget can move it.
+    """
     from google import genai
 
+    from agent.thinking import generate_config
+
     client = genai.Client()  # picks up GOOGLE_GENAI_USE_VERTEXAI + project from env
+    config = generate_config(thinking_budget)
 
     def _generate(prompt: str) -> str:
-        resp = client.models.generate_content(model=model, contents=prompt)
+        resp = client.models.generate_content(model=model, contents=prompt, config=config)
         return resp.text or ""
 
     return _generate

@@ -17,6 +17,7 @@ from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 
 from bridge import timewarp
+from bridge.dotenv import load_env
 from bridge.emit import Emitter
 from bridge.metrics import MetricBackfill, Point
 from bridge.ontology import Attr, Department, Metric, TaskStatus
@@ -228,6 +229,9 @@ def summarise(history: ProductionHistory) -> str:
 
 
 def main() -> None:
+    # Load `.env` first, so this entry point needs no `set -a && source .env`
+    # incantation. A real exported variable still wins (bridge/dotenv.py).
+    load_env()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--dry-run",

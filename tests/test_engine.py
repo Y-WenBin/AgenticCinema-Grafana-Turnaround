@@ -112,7 +112,8 @@ def test_a_run_returns_the_answer_the_system_and_the_settings(offline):
     assert outcome.scorecard is None            # evaluate=False
     assert outcome.response_id is None          # observability=False
     assert outcome.settings.grafana_url == "https://stack.grafana.net"
-    assert outcome.system.producer.sub_agents[0].name == "schedule_analyst"
+    assert [a.name for a in outcome.system.producer.sub_agents] == [
+        "analysts", "remediator", "synthesis"]
 
 
 def test_the_answer_is_stripped_once_here_not_in_each_front_end(offline):
@@ -338,7 +339,11 @@ def test_root_serves_the_playground_to_a_browser_and_json_to_everything_else():
     assert page.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
     assert "<textarea" in page.text, "a playground needs somewhere to type"
-    assert "/ask" in page.text
+    # The fetch calls live in /app.js now, but the page must still pull it in --
+    # a playground whose script 404s looks identical to one that works.
+    assert '/app.js' in page.text
+    assert client.get("/app.js").status_code == 200
+    assert "/ask" in client.get("/app.js").text
 
     machine = client.get("/", headers={"accept": "application/json"})
     assert machine.json() == serve_mod.SERVICE
@@ -363,8 +368,10 @@ def test_the_page_only_calls_endpoints_that_exist():
     that string from `location.origin` in the browser, which knows its own
     scheme for certain, so the whole class of bug is gone rather than tested.)
     """
-    html = (REPO_ROOT / "web" / "index.html").read_text()
-    referenced = set(re.findall(r'(?:fetch\(|src=|href=)"(/[\w./-]*)"', html))
+    source = ((REPO_ROOT / "web" / "index.html").read_text()
+              + (REPO_ROOT / "web" / "app.js").read_text())
+    referenced = set(re.findall(r'(?:fetch\(|src=|href=)"(/[\w./-]*)"', source))
+    assert "/app.js" in referenced, "the page must load its own script"
     assert {"/ask", "/api/capacity", "/api/backend",
             "/banner.png"} <= referenced, "expected calls missing"
 

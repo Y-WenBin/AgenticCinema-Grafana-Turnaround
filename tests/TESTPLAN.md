@@ -10,15 +10,16 @@ Run everything:
 
 ```bash
 uv sync --group dev
-uv run pytest -q          # 387 tests, no network, no credentials
+uv run pytest -q          # 446 tests, no network, no credentials
 uv run ruff check .       # clean
 ```
 
 The suite is offline by contract: no Vertex, no Grafana Cloud, no `mcp-grafana`
-binary, no `.env`. `tests/conftest.py` enforces the Vertex half with an autouse
-fixture that refuses to build a live `genai.Client` — a test that wants the LLM
-judge injects its own `generate`. Anything needing the live stack is in Part 6
-and is marked **manual**.
+binary, no `.env`. `tests/conftest.py` enforces it with autouse fixtures: one
+refuses to build a live `genai.Client` (a test that wants the LLM judge injects
+its own `generate`), another points `load_env` at an empty directory so a
+developer's real `.env` can never make a test pass or fail. Anything needing the
+live stack is in Part 6 and is marked **manual**.
 
 ---
 
@@ -44,6 +45,9 @@ and is marked **manual**.
 | EvalOps dashboard + alert contract | `tests/test_evalops_grafana.py` |
 | Vocabulary ↔ ontology drift | `tests/test_vocabulary.py` |
 | Kitsu write-back | `tests/test_writeback.py` |
+| Gemini thinking budget (the wall-clock lever) | `tests/test_thinking.py` |
+| HTTP security headers + CSP ↔ page agreement | `tests/test_security_headers.py` |
+| No stack hostname or GCP project id committed | `tests/test_no_deployment_identifiers.py` |
 
 ---
 

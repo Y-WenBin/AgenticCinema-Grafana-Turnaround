@@ -36,6 +36,12 @@ class EvidenceLedger:
 
     The Producer (or a test) appends a line per finding; the gate renders the
     whole chain when it asks for approval so the decision is never made blind.
+
+    The three analysts run concurrently (``agent/producer.py``), so "the order
+    they found it" is completion order and varies between runs. Which analysts
+    appear does not: each writes its own ``output_key`` and the fan-out waits
+    for all three, so the chain is always complete before the Remediator reads
+    it.
     """
 
     entries: list[tuple[str, str]] = field(default_factory=list)

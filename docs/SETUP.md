@@ -65,6 +65,13 @@ Model note: everything runs on `gemini-2.5-flash`. Do **not** set
 `TURNAROUND_GEMINI_MODEL_PRO` unless you have `gemini-2.5-pro` quota — it 429s on
 a fresh project.
 
+Speed note: `TURNAROUND_THINKING_BUDGET` defaults to `0` — Gemini 2.5 thinking
+off. Measured end to end against a live stack, same question, only this changed:
+**dynamic thinking 75.4s / 60.7s, off 24.5s / 18.5s**, with all six scorecard
+checks passing either way. The analysts run finished PromQL recipes and report
+the numbers, so there is nothing for thinking to do. Set it to `-1` to hand the
+decision back to Gemini.
+
 ---
 
 ## 2. Grafana Cloud
@@ -89,9 +96,18 @@ by hand: `Authorization=Basic%20<base64>`.
 ### 2b. A service-account token — for provisioning, MCP reads, write-back
 
 Stack → **Administration → Users and access → Service accounts → Add service
-account**. Role **Admin** (it creates a folder, dashboards and alert rules, and
-writes annotations). Then **Add service account token** → copy the `glsa_…`
-value.
+account**. Role **Editor** is enough: the account creates a folder, dashboards,
+alert rules and ML jobs, reads Mimir/Loki/Tempo through MCP, and writes
+annotations — and an Editor can do all of that. Do **not** give it Admin. Admin
+adds the ability to read users, service accounts, API keys and datasource
+secrets, none of which this project touches, and this one token is mounted into
+a publicly reachable Cloud Run service.
+
+Then **Add service account token** → copy the `glsa_…` value.
+
+> If provisioning fails with a 403 on `/api/datasources/uid/…`, your role lacks
+> `datasources:read`. Grant that one permission, or set `GRAFANA_DS_PROM_ID`
+> directly (part 2c) — both are better than promoting the token to Admin.
 
 ```
 GRAFANA_URL=https://<name>.grafana.net
@@ -112,6 +128,11 @@ curl -s -H "Authorization: Bearer $GRAFANA_SERVICE_ACCOUNT_TOKEN" \
 Set `GRAFANA_DS_PROM_UID` / `GRAFANA_DS_LOKI_UID` / `GRAFANA_DS_TEMPO_UID` to the
 `uid` of the `prometheus` / `loki` / `tempo` datasource.
 
+Grafana's ML API wants Prometheus's *numeric* `id` rather than its uid, and that
+number differs per stack. `grafana/ml/build.py` looks it up from the uid when it
+provisions, so there is nothing to set — `GRAFANA_DS_PROM_ID` only exists to skip
+the lookup.
+
 ---
 
 ## 3. Local toolchain
@@ -124,7 +145,7 @@ git clone https://github.com/Y-WenBin/AgenticCinema-Grafana-Turnaround.git turna
 cd turnaround
 uv python install 3.12
 uv sync --group dev
-uv run pytest -q            # 228 pass, no credentials needed — proves the checkout
+uv run pytest -q            # 446 pass, no credentials needed — proves the checkout
 uv run ruff check .
 
 # mcp-grafana (the agent's tool server). Any one of:
@@ -174,20 +195,16 @@ TURNAROUND_PSEUDONYM_SALT=$(openssl rand -hex 16)
 # TURNAROUND_FARM_CONVENTION=opencue
 ```
 
-> **Gotcha:** `agent.run` and `agent.serve` load `.env` themselves, but
-> `seed.populate`, `seed.refresh` and `grafana.provision` do **not**. Before
-> running those, export the file into your shell:
-> ```bash
-> set -a && source .env && set +a
-> ```
+Every entry point loads `.env` itself — `agent.run`, `agent.serve`,
+`seed.populate`, `seed.refresh` and `grafana.provision`. A variable already
+exported in your shell always wins, so CI and Cloud Run (which set the
+environment directly and ship no `.env`) are unaffected.
 
 ---
 
 ## 5. Mode A — run the whole pipeline with the simulated show
 
 ```bash
-set -a && source .env && set +a
-
 uv run python -m seed.populate      # writes ~1450 spans, ~1470 logs, ~5900 metric points + 1 annotation
 uv run python -m grafana.provision  # folder "Turnaround" + 4 dashboards + alert groups + ML jobs
 
@@ -408,7 +425,7 @@ Full detail: [`deploy/README.md`](../deploy/README.md).
 
 | Symptom | Cause / fix |
 |---|---|
-| `PrivacyViolation: TURNAROUND_PSEUDONYM_SALT is unset` | You ran `seed.populate` / `grafana.provision` without `set -a && source .env && set +a` first |
+| `PrivacyViolation: TURNAROUND_PSEUDONYM_SALT is unset` | No `.env` at the repo root, or the key is missing from it. Every entry point loads `.env` itself now — check `TURNAROUND_PSEUDONYM_SALT` is set and is not still `change-me` |
 | OTLP `401` on seed | `OTEL_EXPORTER_OTLP_HEADERS` base64 must be of `instanceID:token`, not the token alone; keep `%20` after `Basic` |
 | Mimir rejects samples ("out of order" / "too old") | Use plain `seed.populate` (it compresses to a 45-min window). Don't pass `--compress 0` against hosted Grafana Cloud |
 | Dashboards empty a few minutes after seeding | Run `seed.refresh`, or widen a panel's range to `now-2h` (queries use `last_over_time(…[2h:])`) |

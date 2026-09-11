@@ -27,6 +27,7 @@ from agent.config import (
     load_env,
     settings,
 )
+from bridge import dotenv
 
 ENV_KEYS = (
     "GRAFANA_URL", "GRAFANA_SERVICE_ACCOUNT_TOKEN", "GRAFANA_CLOUD_MCP_TOKEN",
@@ -43,9 +44,17 @@ def clean_env(monkeypatch, tmp_path):
 
     ``settings()`` reads the repo's real ``.env``; point it at an empty tmp dir
     so a developer's local credentials cannot make a test pass or fail.
+
+    Both ``REPO_ROOT``s are redirected. ``load_env`` lives in ``bridge.dotenv``
+    now (so ``seed.*`` and ``grafana.*`` can use it too) and resolves the path
+    against *that* module's global -- patching only ``agent.config.REPO_ROOT``
+    silently stopped working, and the suite quietly began reading the developer's
+    real ``.env``. ``tests/conftest.py`` holds the backstop that made that
+    visible instead of subtle.
     """
     for key in ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(dotenv, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(config, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(config, "CLOUD_MCP_TOKEN_FILE", tmp_path / ".secrets" / "token")
     return tmp_path

@@ -17,6 +17,8 @@ from pathlib import Path
 
 import requests
 
+from bridge.dotenv import load_env
+
 HERE = Path(__file__).parent
 FOLDER_UID = "turnaround"
 FOLDER_TITLE = "Turnaround"
@@ -73,16 +75,22 @@ def push_alert_rules(s: requests.Session, url: str) -> None:
 
 
 def push_ml(s: requests.Session, url: str) -> None:
-    path = HERE / "ml" / "jobs.json"
-    if not path.exists():
-        print("  (no ml/jobs.json)")
-        return
+    """Build the ML jobs against *this* stack and push them.
+
+    Built here rather than read from a committed ``ml/jobs.json``: a written job
+    carries the stack's own hostname and the numeric datasource id, both of
+    which differ per stack. A checked-in copy was therefore two things at once
+    -- a fork that could not provision, and our hostname published in a public
+    repo.
+    """
+    from grafana.ml.build import jobs
+
     base = f"{url}/api/plugins/grafana-ml-app/resources/manage/api/v1"
     existing: dict[str, str] = {}
     for route in ("jobs", "outliers"):
         for j in s.get(f"{base}/{route}", timeout=20).json().get("data", []):
             existing[j["name"]] = j["id"]
-    for job in json.loads(path.read_text()):
+    for job in jobs():
         kind = job.pop("_kind", "forecast")
         route = "outliers" if kind == "outlier" else "jobs"
         if job["name"] in existing:
@@ -98,6 +106,9 @@ STEPS = {"dashboards": push_dashboards, "alerts": push_alert_rules, "ml": push_m
 
 
 def main() -> None:
+    # Load `.env` first, so this entry point needs no `set -a && source .env`
+    # incantation. A real exported variable still wins (bridge/dotenv.py).
+    load_env()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--only", choices=STEPS, action="append", help="run only these steps")
     args = ap.parse_args()
