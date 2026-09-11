@@ -72,7 +72,11 @@ DEFAULT_CONCURRENT_ASKS = 2     # a run holds an MCP subprocess for ~40s
 #:     budget -1 (dynamic)   75.4s, 60.7s     6/6 scorecard checks pass
 #:     budget  0 (off)       24.5s, 18.5s     6/6 scorecard checks pass
 #:
-#: Roughly 3x, for no measured loss of answer quality.
+#: Roughly 3x, for no measured loss of answer quality. Deployed, the same
+#: revision has since been measured between 23s and 63s end to end without any
+#: code changing: nearly all of a run is model latency, and that moves around
+#: through the day. The knob is still worth what it is worth -- it moved the
+#: whole band down -- but a single timing is not a benchmark.
 #:
 #: Zero is the right default *for this pipeline specifically*, because none of
 #: the five agents is doing open-ended reasoning: the analysts are handed

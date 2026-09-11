@@ -191,9 +191,10 @@ footer pre{background:var(--surface);border:1px solid var(--line);border-radius:
     <div id="err"></div>
 
     <p class="hint">
-      A run takes <strong>20–40 seconds</strong>: five agents — the three analysts
-      working in parallel — each writing and running its own PromQL, LogQL and TraceQL
-      against a live Grafana Cloud stack, then a judge tier scoring the answer.
+      A run usually takes <strong>25–45 seconds</strong>, sometimes more: five agents
+      — the three analysts working in parallel — each writing and running its own
+      PromQL, LogQL and TraceQL against a live Grafana Cloud stack, then a judge tier
+      scoring the answer. Nearly all of that is waiting on the model, so it varies.
       Everything below is produced live — nothing is canned.
       <br><br>
       It knows one invented show, <em>Nightfall</em>: sequences <code>SEQ0010</code>–<code>SEQ0430</code>,

@@ -114,7 +114,7 @@ Analysts are read-only *by construction*, not by prompt — they are wired to an
 **[turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app)** —
 a playground with the four questions verified against the live stack. Ask one and
 you get the answer, the judge scorecard, and the full tool timeline showing the
-PromQL, LogQL and TraceQL the agents actually wrote. A run takes 20–40 seconds
+PromQL, LogQL and TraceQL the agents actually wrote. A run usually takes 25–45 seconds
 because it is really running.
 
 No auth, nothing to install. Same thing from a terminal:

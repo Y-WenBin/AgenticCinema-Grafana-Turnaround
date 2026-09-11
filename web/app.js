@@ -116,11 +116,13 @@ function startClock() {
   $("status").classList.add("on");
   const tick = () => {
     const s = Math.round((Date.now() - t0) / 1000);
-    // A typical run is 20-40s. Past that, the likeliest cause by far is a cold
-    // start -- the service scales to zero, and the first request after an idle
-    // period pays for the container and the ADK import graph.
+    // A run is usually 25-45s and is almost entirely model latency, which moves
+    // around during the day -- measured on one unchanged revision: 23s at its
+    // fastest, 63s at its slowest. So past 50s the honest thing to say is "still
+    // going", not a guess at a cause. Blaming a cold start would be wrong most
+    // of the time: one instance is kept warm.
     $("statusText").textContent = "Running the pipeline — " + s + "s"
-      + (s > 45 ? " (a cold start adds a few seconds)" : "");
+      + (s > 50 ? " (still going — model latency varies)" : "");
   };
   tick();
   timer = setInterval(tick, 1000);
