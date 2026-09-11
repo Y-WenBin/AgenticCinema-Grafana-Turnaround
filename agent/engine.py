@@ -226,10 +226,10 @@ async def answer_question(
 def _halt_for(exc: APIError, cfg: Settings) -> Halt:
     """Turn a Vertex-side failure into something a producer can act on.
 
-    A 429 is the single likeliest live failure on a hackathon-scale project --
-    the analysts fan out, each retries a query, and a per-minute quota is small.
-    It arrived as a forty-line ADK traceback, which is the worst thing that can
-    happen on camera.
+    A 429 is the single likeliest live failure on a small project: the analysts
+    fan out, each may retry a query, and a per-minute quota is not large. It used
+    to arrive as a forty-line ADK traceback, which tells a supervisor nothing
+    they can act on. One sentence and an exit code is more use than a stack.
     """
     if getattr(exc, "code", None) == 429:
         return Halt(

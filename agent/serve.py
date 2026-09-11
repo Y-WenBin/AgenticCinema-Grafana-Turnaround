@@ -195,14 +195,6 @@ def index(request: Request) -> dict | FileResponse:
     return SERVICE
 
 
-@app.get("/banner.png", include_in_schema=False)
-def banner() -> FileResponse:
-    """The hackathon card -- page hero and, more usefully, the link preview
-    every chat client and submission page renders from `og:image`."""
-    return FileResponse(WEB / "banner.png", media_type="image/png",
-                        headers={"Cache-Control": "public, max-age=86400"})
-
-
 @app.get("/app.js", include_in_schema=False)
 def app_js() -> FileResponse:
     """The playground's script. A separate file so the CSP can refuse inline

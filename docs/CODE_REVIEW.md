@@ -192,7 +192,7 @@ construct a live Vertex client; a test wanting the LLM judge injects its own
 
 Running the four demo questions back to back exhausted the project's per-minute
 Gemini quota. The third question exited 1 with a forty-line ADK traceback ending
-in `google.adk.models.google_llm._ResourceExhaustedError`. On a hackathon-scale
+in `google.adk.models.google_llm._ResourceExhaustedError`. On a small-project
 project this is the *likeliest* live failure there is — and `agent/config.py`'s
 own comments already note that this project sees 429s.
 
@@ -233,7 +233,7 @@ hostname from every `/ask` response for exactly that reason.
 
 | Part 6 | Result |
 |---|---|
-| 1. Four demo questions cold | **pass** — 4/4, **24/24 judge checks pass**, `hallucination` 1.00 on all four, privacy floor held every time |
+| 1. Four representative questions, cold | **pass** — 4/4, **24/24 judge checks pass**, `hallucination` 1.00 on all four, privacy floor held every time |
 | 2. FarmAnalyst uses Tempo | **pass** — `tempo_traceql-search` in all four timelines |
 | 3. Trace in Tempo | **pass** — 1 `invoke_agent producer` trace, 8 matching spans |
 | 4. Eval events in Loki | **pass** — 6 `gen_ai.evaluation.result` records, correlated by `response_id`, `privacy_floor_respected=pass` |

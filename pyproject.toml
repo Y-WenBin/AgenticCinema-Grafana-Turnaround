@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 license = { file = "LICENSE" }
 
 dependencies = [
-  # Google Cloud AI — the only permitted AI runtime for this hackathon track
+  # Google Cloud AI — the only AI runtime on the deployed path (see agent/config.py)
   "google-adk>=1.0.0",
   "google-genai>=1.0.0",
   "mcp>=1.9.0,<2",         # MCP client for ADK's MCPToolset; ADK 2.8 predates the mcp 2.x API rename

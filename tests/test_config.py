@@ -270,8 +270,10 @@ def test_the_binary_falls_back_to_a_bare_name_so_the_error_names_it(monkeypatch)
 
 
 def test_bootstrap_forces_vertex_and_never_offers_the_public_api(clean_env, monkeypatch):
-    """R4: the hackathon bars every non-Google runtime, and the public
-    Generative Language API is a different surface from Vertex."""
+    """R4: the runtime is Vertex-only by deployment constraint, and the public
+    Generative Language API is a different surface with different auth, quotas
+    and data handling -- reaching it by accident is a real failure, not a
+    nuance."""
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "FALSE")
     bootstrap_vertex()
     # forced on even when the environment explicitly asked for the other path

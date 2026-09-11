@@ -34,8 +34,11 @@ if TYPE_CHECKING:
     from observability.genai import GenAiTelemetry
 
 # --------------------------------------------------------------------------- #
-# Known ground truth (measured in seed/story.md; ranges, because dates are
-# relative to seeding time and the figures drift a little run to run).
+# Known ground truth. Measured from the generated history rather than asserted
+# in the config -- `seed/model.py` applies the perturbations declared in
+# `seed/show.yaml` and these are what falls out, pinned by `tests/test_show.py`
+# and `tests/test_populate.py`. Bands rather than values, because dates are
+# relative to seeding time and the figures drift a little run to run.
 # --------------------------------------------------------------------------- #
 
 CRUNCH_SEQUENCE = "SEQ0420"

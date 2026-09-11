@@ -5,9 +5,13 @@ bootstraps Vertex AI, picks the Gemini models, and locates the ``mcp-grafana``
 binary. Everything else in ``agent/`` imports from here so there is a single
 answer to "which model / which stack / which binary".
 
-The hackathon rules bar every non-Google AI runtime, so the only model strings
-this module will hand out are Gemini on Vertex. ``GOOGLE_GENAI_USE_VERTEXAI`` is
-forced on; there is deliberately no path to the public Generative Language API.
+The runtime is deliberately single-vendor: the only model strings this module
+will hand out are Gemini on Vertex, ``GOOGLE_GENAI_USE_VERTEXAI`` is forced on,
+and there is no path to the public Generative Language API. That is a deployment
+constraint rather than a preference -- the pipeline itself holds no opinion about
+which model answers, and ``analyst_model`` is the one place to change if you are
+porting it. A test keeps the constraint honest rather than aspirational
+(``tests/test_reproducibility.py``).
 """
 
 from __future__ import annotations

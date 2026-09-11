@@ -35,8 +35,8 @@ from agent.config import HOSTED_MCP_URL, Settings
 # core (Prometheus + Loki + discovery + annotations + alerts); the FarmAnalyst
 # additionally gets Tempo. Every analyst is told about logs and traces in the
 # shared vocabulary, so each must be able to reach them -- ADK aborts the whole
-# run with a ValueError if a model calls a tool outside its filter, which is not
-# a failure mode worth risking on camera to save a few tokens of tool schema.
+# run with a ValueError if a model calls a tool outside its filter, and losing a
+# run outright is a poor trade for the few tokens of tool schema it would save.
 _READ_CORE = [
     "query_prometheus", "query_prometheus_histogram",
     "list_prometheus_metric_names", "list_prometheus_label_names",

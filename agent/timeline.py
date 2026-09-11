@@ -1,11 +1,10 @@
 """A record of every tool call the agents make.
 
-The agent-tier gate is "four demo questions answered cold, with a tool timeline
-showing real MCP calls". This is that timeline: a small, ordered log that the
-``before``/``after`` tool callbacks on each agent write to, so the console and
-the CLI can show *which agent called which Grafana MCP tool with what arguments*
-and how long it took. It is evidence that the answer came from the live stack
-and not from the model's imagination.
+The agent tier has to be able to show its working. This is how: a small, ordered
+log that the ``before``/``after`` tool callbacks on each agent write to, so the
+console and the CLI can show *which agent called which Grafana MCP tool with
+what arguments* and how long it took. It is the evidence that an answer came
+from the live stack rather than from the model's imagination.
 
 No dependency on ADK -- the callbacks in ``agent/analysts.py`` adapt ADK's
 signatures to :meth:`ToolTimeline.begin` / :meth:`ToolTimeline.finish`.
@@ -144,8 +143,12 @@ class TimelineRecorder:
     """Pairs ADK's ``before_tool`` / ``after_tool`` callbacks onto one timeline.
 
     ADK gives no call id linking a before to its after, but it hands the *same*
-    ``ToolContext`` instance to both and runs a turn's tool calls sequentially,
-    so keying the pending call on ``id(tool_context)`` is exact.
+    ``ToolContext`` instance to both, and a distinct one per call. Keying the
+    pending call on ``id(tool_context)`` is therefore exact even though calls
+    overlap freely -- ADK issues one agent's tool calls concurrently (a single
+    analyst turn routinely fires five queries at once), and the three analysts
+    themselves run in parallel (``agent/producer.py``). Nothing here assumes an
+    order; ``seq`` records the order calls *started*.
 
     :meth:`finish` consumes the pending entry, which makes a second finish for
     the same call a no-op. The Remediator relies on that: when the approval gate

@@ -1,9 +1,9 @@
 # Turnaround — test plan for reproducible results
 
 This is the contract the test suite enforces so a reviewer can run the project
-and get the same conclusions we did. It also maps the hackathon's suggested
-unit-test checklist onto Turnaround's actual architecture, and marks what each
-row is: **auto** (a pytest test), **manual** (a live-stack step), or **design**
+and get the same conclusions we did. Rows are grouped the way the system is —
+Grafana MCP integration, agent orchestration, data pipeline, deployment
+readiness — and each is marked **auto** (a pytest test), **manual** (a live-stack step), or **design**
 (a guarantee the shape of the code makes, verified by an auto test).
 
 Run everything:
@@ -60,7 +60,7 @@ model, and emits the same telemetry contract. Those are the invariants below.
 
 | # | Invariant | Enforced by | Test |
 |---|---|---|---|
-| R1 | **Deterministic seed.** Same `seed/show.yaml` → identical metrics, logs, traces. The figures in `seed/story.md` are *measured from the generated data*, never hard-coded. | `seed/model.py` fixed RNG | `tests/test_populate.py`, `tests/test_reproducibility.py::test_seed_is_deterministic` |
+| R1 | **Deterministic seed.** Same `seed/show.yaml` → identical metrics, logs, traces. The figures the judges score against are *measured from the generated data*, never hard-coded. | `seed/model.py` fixed RNG | `tests/test_populate.py`, `tests/test_reproducibility.py::test_seed_is_deterministic` |
 | R2 | **Ground truth is a band, not a point.** Dates are relative to seed time, so the join ratio / render waste / failure rate drift a little run to run within known ranges. The deterministic judge encodes those ranges. | `agent/evaluation.py` (`JOIN_RATIO_BAND`, `_grounding_anchors`) | `tests/test_evaluation.py` |
 | R3 | **Privacy floor is absolute.** A pool of < 3 people (`di-pool-1`, 2 people) never appears in an answer, an evaluation payload, captured content, or the evidence chain — every run, zero tolerance. | `bridge/privacy.py` (`MIN_POOL_SIZE=3`, `assert_no_pii`), `agent/evaluation.py` (`privacy_floor_respected`), analyst prompt | `tests/test_privacy.py`, `tests/test_evaluation.py::test_deterministic_judge_catches_a_subfloor_pool_leak_*`, `tests/test_reproducibility.py::test_privacy_floor_is_enforced_on_every_answer_surface` |
 | R4 | **Model constraint.** Only Gemini on Vertex at runtime (`gemini-2.5-flash`); no non-Google AI SDK on the runtime path, and no path to the public Generative Language API. | `agent/config.py` (`bootstrap_vertex` forces `GOOGLE_GENAI_USE_VERTEXAI=TRUE`; the model is `Settings.analyst_model`, resolved after `.env` loads) | `tests/test_reproducibility.py::test_no_non_google_ai_sdk_on_the_runtime_path`, `tests/test_config.py::test_bootstrap_forces_vertex_and_never_offers_the_public_api` |
@@ -86,7 +86,7 @@ Streamable HTTP with an OAuth 2.1 bearer.
 | **Edge — tool-name drift across modules** | auto | Every tool in any analyst's or the Remediator's filter is recognised by the timeline as a Grafana MCP call, and every Remediator write tool is in the approval gate's `WRITE_TOOLS`. These four lists live in three modules; drift between them is silent — it does not break a run, it quietly stops marking calls as Grafana calls (weakening the demo's central claim) or lets a write past the gate. | `test_contracts.py` |
 | **Edge — read/write privilege split holds in hosted mode too** | auto | No analyst filter intersects `WRITE_TOOLS`. In oss mode `--disable-write` also enforces this; in hosted mode the filter is the *only* thing that does. | `test_contracts.py::test_no_analyst_can_reach_a_write_tool` |
 | Config resolution: mode, model and ceiling come from `.env` | auto | `TURNAROUND_MCP_MODE` / `_GEMINI_MODEL` / `_MAX_LLM_CALLS` set only in `.env` reach `Settings`. They were module constants read at import — before `load_env()` — so `.env` set them and nothing used them. An unrecognised mode falls back to `oss` (the read-only, unattended path), never to `hosted`. | `test_config.py` |
-| **Hackathon alignment — runtime use of the partner MCP** | manual + auto | Live: `uv run python -m agent.run "why is SEQ0420 slipping?"` prints a tool timeline with `*`-marked `query_prometheus` / `query_loki_logs` / `tempo_*` calls against Grafana Cloud, and an `invoke_agent` trace with `execute_tool` children in Tempo. Auto guard: the import-and-instantiate test above. | see Part 6 |
+| **Grafana MCP is used at runtime, not just named** | manual + auto | Live: `uv run python -m agent.run "why is SEQ0420 slipping?"` prints a tool timeline with `*`-marked `query_prometheus` / `query_loki_logs` / `tempo_*` calls against Grafana Cloud, and an `invoke_agent` trace with `execute_tool` children in Tempo. Auto guard: the import-and-instantiate test above. | see Part 6 |
 
 ---
 
@@ -120,7 +120,7 @@ onto `shot_id` / `sequence` / `department` — and the crunch forecast that foll
 | Case | Kind | What it asserts | Test |
 |---|---|---|---|
 | Domain relevance: media input → domain output | auto | A real OpenCue job name round-trips through `bridge/ontology.py` to the right `shot_id` / `sequence` / `department`; a malformed name is rejected, not guessed. | `test_ontology.py`, `test_reproducibility.py::test_job_name_parses_to_domain_fields` |
-| Seed → measured story | auto | The generated show reproduces the `seed/story.md` mechanism: SEQ0420's render core-hours per comp iteration sit in `JOIN_RATIO_BAND`, waste is concentrated on SEQ0420. | `test_populate.py`, `test_show.py` |
+| Seed → measured mechanism | auto | The generated production reproduces the mechanism `seed/show.yaml` declares: SEQ0420's render core-hours per comp iteration sit in `JOIN_RATIO_BAND`, waste is concentrated on SEQ0420. | `test_populate.py`, `test_show.py` |
 | **Edge — context window / oversized payload** | auto | An oversized tool result (e.g. a Loki query returning thousands of lines) is length-capped with a `…` marker in the evidence path rather than dumped or silently truncated mid-token; analyst prompts constrain queries to aggregates so the model context stays bounded. | `test_timeline.py::test_args_and_results_are_digested_not_dumped`, `test_reproducibility.py::test_oversized_tool_payload_is_capped_not_dumped` |
 | Captured content is guarded | auto | With `TURNAROUND_CAPTURE_CONTENT=1`, a prompt containing a crew name fails `assert_no_pii` loudly instead of being attached to a span. | `test_observability.py` |
 
@@ -131,7 +131,7 @@ onto `shot_id` / `sequence` / `department` — and the crunch forecast that foll
 | Case | Kind | What it asserts | Test |
 |---|---|---|---|
 | Startup config validation | auto | With `GOOGLE_CLOUD_PROJECT` / Grafana env unset, `agent.run.ask()` returns exit 2 with a message naming the missing keys; `/healthz` reports `vertex_ready` / `grafana_ready` honestly. | `test_reproducibility.py::test_startup_refuses_incomplete_config` |
-| **Edge — submission compliance** | auto | `LICENSE` exists and is Apache-2.0; `pyproject.toml` declares that license; `README.md` carries a runnable quickstart (`uv sync`, `uv run pytest`); `deploy/README.md` documents the init/deploy path. | `test_reproducibility.py::test_repo_is_submission_compliant` |
+| **Edge — usable from a fresh clone** | auto | `LICENSE` exists and is Apache-2.0; `pyproject.toml` declares that license; `README.md` carries a runnable quickstart (`uv sync`, `uv run pytest`); `deploy/README.md` documents the init/deploy path. | `test_reproducibility.py::test_the_repo_is_usable_by_someone_who_just_cloned_it` |
 | `/ask` contract | auto | The endpoint returns exactly `answer`, `timeline`, `evaluation`, `response_id`, `circuit_breaker_tripped`, `halted_by`, `halt_detail`, `grafana_url`; an unconfigured server returns a single `error` naming the missing keys instead of a partial body; a question outside 3..2000 characters is rejected with 422 before any Gemini call is made. | `test_engine.py` |
 | The public endpoint is capped three ways | auto | A rolling per-visitor window, a global daily budget and a concurrency cap, each failing differently. Admission decides *and* records under one lock, so 16 simultaneous arrivals against a budget of 10 admit exactly 10. A refused request costs no Gemini call and does not spend budget — otherwise a bot that only ever gets 429s still drains the day for everyone. | `test_limits.py` (14 tests), `test_engine.py::test_ask_refuses_past_the_cap_without_running_the_pipeline` |
 | A concurrency slot always comes back | auto | Returned in `finally`, so an exception on the way out does not leak it. A leak wedges the endpoint at "busy" with nothing running; a double release cannot mint capacity either. | `test_engine.py::test_a_finished_run_gives_its_slot_back`, `::test_a_crashing_run_gives_its_slot_back_too`, `test_limits.py::test_a_double_release_cannot_mint_capacity` |

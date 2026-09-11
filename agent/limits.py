@@ -1,7 +1,8 @@
 """Guardrails for the public endpoint: who may ask, how often, how many at once.
 
-The demo is deliberately open — no key, no signup, because a judge with sixty
-seconds will not create an account. Open and *unbounded* is a different thing:
+The public endpoint is deliberately open — no key, no signup, because someone
+with a minute to spare will not create an account to try something once. Open and
+*unbounded* is a different thing:
 every ``/ask`` spawns a multi-agent run that makes real Gemini calls against a
 real billing account, so the endpoint needs a spend ceiling that does not depend
 on everyone being well-behaved.
@@ -157,7 +158,7 @@ class Gatekeeper:
 
     def snapshot(self) -> dict[str, int]:
         """Current state, for ``/health`` and for a human deciding whether the
-        demo is worth pointing a judge at right now."""
+        service has capacity to show someone right now."""
         with self._lock:
             now = self.clock()
             self._prune(now)

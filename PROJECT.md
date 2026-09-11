@@ -11,15 +11,14 @@ record — including every bug found on the way — is
 | **`PROJECT.md`** (this file) | Technical reference: architecture, module map, design decisions |
 | [`AGENTS.md`](AGENTS.md) | Orientation for a coding agent or a new contributor: invariants and where things live |
 | [`docs/SETUP.md`](docs/SETUP.md) | End-to-end setup: Grafana Cloud, Google Cloud, a real NLE |
-| [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md) | The 2026-09-09 structural review and what changed |
+| [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md) | A dated structural review and what changed because of it |
 | [`docs/DESIGN_LOG.md`](docs/DESIGN_LOG.md) | Chronological build record; findings, dated |
 | [`tests/TESTPLAN.md`](tests/TESTPLAN.md) | The reproducibility contract the suite enforces |
-| [`seed/story.md`](seed/story.md) | The measured demo narrative |
 | [`deploy/README.md`](deploy/README.md) | Cloud Run image and deploy script |
 
 **Status.** Data plane, dashboards/alerts/ML, the agent tier, the EvalOps tier
-and the deploy scaffolding are complete and tested. All four demo questions are
-verified cold against the live stack. **446 tests**, offline; `ruff` clean. The
+and the deploy scaffolding are complete and tested. All four representative
+questions are verified cold against the live stack. **446 tests**, offline; `ruff` clean. The
 Cloud Run *deploy run* and a live Kitsu/OpenCue instance are the two open items
 (see [Roadmap](#roadmap)). Runs against a Grafana Cloud stack and a Vertex AI
 project you supply (`docs/SETUP.md`); the model is `gemini-2.5-flash`.
@@ -168,9 +167,8 @@ Line counts are indicative, not maintained to the digit.
 |---|---:|---|
 | [`model.py`](seed/model.py) | 414 | The simulation: crunch emerges from a mechanism rather than being asserted |
 | [`populate.py`](seed/populate.py) | 307 | Driver: history → spans, logs, metrics, annotations; `--dry-run` exercises the full write path |
-| [`show.yaml`](seed/show.yaml) | 123 | The show declaration and its two story beats |
+| [`show.yaml`](seed/show.yaml) | 123 | The production declaration and its two perturbations |
 | [`refresh.py`](seed/refresh.py) | 62 | Re-seed on a loop so the compressed window always overlaps "now" |
-| [`story.md`](seed/story.md) | 59 | The measured demo narrative |
 
 ### `grafana/` — dashboards, alerts, ML
 
@@ -231,8 +229,8 @@ preference. They are recorded because re-deriving them is expensive.
 **Trace ids are derived, not discovered.** `DeterministicIdGenerator` derives the
 trace id from the shot id and the span id from `(shot, department, iteration)`.
 The agent computes a shot's trace id from a producer's question with no lookup
-table; re-running the seeder overwrites rather than duplicates; a scripted demo
-stays reproducible. It falls back to random ids when unseeded, so the agent's own
+table; re-running the seeder overwrites rather than duplicates; and a run stays
+reproducible across re-seeds. It falls back to random ids when unseeded, so the agent's own
 instrumentation — which shares the process — is unaffected.
 
 **Spans are backfilled with explicit timestamps.** A shot's trace spans weeks, so
@@ -282,7 +280,7 @@ also why the demo has a shelf life:** see [Running it](#running-it).
 **The pipeline is deterministic, not model-routed.** Flash, asked to "consult the
 right specialists then synthesise", reliably stopped after one and echoed it. So
 the shape is a `SequentialAgent` and every question runs the whole board. It costs
-a few extra Flash calls and buys a demo that behaves the same way every take.
+a few extra Flash calls and buys a pipeline that answers the same way every run.
 
 **One run path, two front ends.** `agent/engine.py` builds, drives and scores a
 run exactly once. `run.py` renders text, `serve.py` renders JSON, and neither
@@ -472,28 +470,25 @@ from any crew-load alert; it is under the floor.
 
 ---
 
-## Hackathon context
+## Runtime constraints
 
-**Agentic Cinema: The Blockbuster Hackathon** — Grafana Labs track.
+Two constraints shape the code more than anything else, and both are deployment
+facts rather than preferences.
 
-| Criterion | How Turnaround answers it |
-|---|---|
-| Technological Implementation | Real industry conventions (OpenCue job names, Kitsu/ShotGrid/ftrack status vocabularies), Grafana MCP as the only tool surface, Tempo/Loki/Mimir/alerting/annotations, Grafana ML doing real prediction, ADK multi-agent on Vertex AI, and the agent self-instrumented with the OTel GenAI conventions |
-| Design | Crew Load hero view, a visible evidence chain, an approval queue |
-| Potential Impact | A documented labour crisis with hard numbers; the audience is named in the rules; the mechanism addresses the stated cause |
-| Quality of the Idea | Two non-obvious moves — *a shot is a distributed trace*, and *joining the creative plane to the compute plane*. Neither reimplements Grafana Assistant |
+**The runtime is Gemini on Vertex only.** No non-Google AI SDK may appear on the
+runtime import path, and there is no route to the public Generative Language
+API. Coding assistants are a development tool and are fine; a runtime dependency
+on one is not. Pinned by
+`test_reproducibility.py::test_no_non_google_ai_sdk_on_the_runtime_path`, so it
+stays a fact rather than an intention. The pipeline itself holds no opinion
+about which model answers — `Settings.analyst_model` is the single place to
+change if you are porting it.
 
-Constraints that still shape the code: Apache-2.0 and detectable; a hosted
-project URL; a ≤3-minute public demo showing the project functioning as built;
-the partner MCP imported and *called*, not named in a README; and **no non-Google
-AI in the runtime path** (Claude Code as a *development* tool is fine; the
-deployed agent is Gemini/Vertex only — pinned by
-`test_reproducibility.py::test_no_non_google_ai_sdk_on_the_runtime_path`).
-
-The hosted Grafana Cloud MCP endpoint is **interactive-OAuth only with no
-service-account path**, which is why the deployed, unattended path runs OSS
-`grafana/mcp-grafana` with a service-account token, and hosted mode exists as an
-opt-in.
+**The hosted Grafana Cloud MCP endpoint is interactive-OAuth only**, with no
+service-account path. That is why the deployed, unattended path runs the OSS
+`grafana/mcp-grafana` binary with a service-account token, and hosted mode
+exists as an opt-in that exercises the interactive-authorization flow. See
+[`agent/mcp_grafana.py`](agent/mcp_grafana.py).
 
 ---
 
@@ -502,12 +497,11 @@ opt-in.
 | Phase | Work | Gate | State |
 |---|---|---|---|
 | 1 | Data plane | Correlation confirmed in a real stack | ✅ |
-| 2 | The show | Story present and measured | ✅ |
+| 2 | The simulated production | Mechanism present and measured, not asserted | ✅ |
 | 3 | Dashboards; ML forecasts; outlier detectors; alert rules | Forecast differs from plan; crew alert fires on comp-pool-2 | ✅ |
-| 4 | MCP read-only + write instances; ADK pipeline; approval gate; write-back | Four demo questions answered cold, tool timeline showing real MCP calls | ✅ 4/4 |
+| 4 | MCP read-only + write instances; ADK pipeline; approval gate; write-back | Questions answered cold, with a tool timeline showing real MCP calls | ✅ |
 | 5 | EvalOps: self-instrumentation, judge tier, EvalOps surface | Trace + eval events land in the same stack; drift and privacy alerts evaluate | ✅ |
-| 6 | Cloud Run deploy *run*; supervisor console | Full demo against the public URL in a clean browser profile | ✅ deployed — [https://turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app) with a public playground at `/`, capped three ways; the *supervisor* console (the approval gate as a UI) is still CLI-only |
-| 7 | Video, README, Devpost | Submitted | in progress |
+| 6 | Cloud Run deploy; supervisor console | Runs end to end against the public URL from a clean browser profile | ✅ deployed — [https://turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app), with a public playground at `/` capped three ways. The *supervisor* console (the approval gate as a UI) is still CLI-only |
 
 **Open by decision.** Live Kitsu and OpenCue instances: no container runtime on
 the build machine. Source adapters sit behind Protocols so real instances drop in
@@ -523,10 +517,10 @@ are in.
 
 | Risk | Mitigation |
 |---|---|
-| Stale seed on demo day reads as a broken agent | Re-seed immediately before recording; `seed/refresh.py` for long sessions. This is the single most likely live failure |
-| Vertex per-minute quota exhausted by consecutive questions | Typed `Halt(kind="model_quota")`: one sentence, exit 3, no traceback. Space the questions, or raise project quota |
-| Synthetic data reads as fake | Provenance stated plainly; real OpenCue job-name convention round-tripped in tests; a simulated *mechanism* rather than a hard-coded outcome |
-| Agent non-determinism on camera | Fixed seed, fixed pipeline shape, scripted `story.md`, rehearsed question set |
-| Forecast quality on limited history | Prophet jobs need ~100+ continuous points; on the compressed base that means `refresh.py` running for a couple of hours before the forecasts train |
-| No live Kitsu/OpenCue costs implementation points | Adapters behind Protocols; restore if a container runtime becomes available |
-| Backfilled data awkward to remove | `--dry-run` first; consider a throwaway stack |
+| A stale seed reads as a broken agent | The history is compressed into a ~45-minute window ending at seed time, so it ages out in about two hours and every query then returns nothing. `seed/refresh.py` re-seeds on a loop; the deployed stack runs it as a scheduled job. This is the single most likely live failure |
+| Vertex per-minute quota exhausted by consecutive questions | Typed `Halt(kind="model_quota")`: one sentence, exit 3, no traceback. Space the questions, or raise the project's quota |
+| Synthetic data reads as fake | Provenance stated plainly in the README; the real OpenCue job-name convention is round-tripped in the test suite; the generator simulates a *mechanism* rather than hard-coding an outcome |
+| Non-determinism between runs | Fixed seed, fixed pipeline shape, and a deterministic judge scoring every answer against known ground truth. The model still phrases things differently run to run — what is pinned is the figures it is allowed to reach |
+| Forecast quality on limited history | Prophet jobs need ~100+ continuous points; on the compressed time base that means `refresh.py` running for a couple of hours before the forecasts train |
+| No live Kitsu/OpenCue instance exercised | Adapters sit behind Protocols, and the parsers are tested against real fixtures; a live instance drops in without a rewrite |
+| Backfilled data is awkward to remove | `--dry-run` first; consider a throwaway stack while iterating |

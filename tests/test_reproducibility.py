@@ -1,11 +1,10 @@
 """Reproducibility + hardening suite (see tests/TESTPLAN.md).
 
-The invariants that let a reviewer re-run Turnaround and reach the same
+The invariants that let anyone re-run Turnaround and reach the same
 conclusions: a deterministic seed, an absolute privacy floor, the permitted
-model only, a bounded per-run token budget, a real partner-MCP call path, and a
-credential-safe deploy context. Framed against the hackathon's suggested
-unit-test checklist (Grafana MCP integration / agent orchestration / data
-pipeline / deployment readiness).
+model only, a bounded per-run token budget, a real MCP call path, and a
+credential-safe deploy context. Grouped the way the system is: Grafana MCP
+integration, agent orchestration, data pipeline, deployment readiness.
 """
 
 from __future__ import annotations
@@ -182,8 +181,11 @@ def test_privacy_floor_is_enforced_on_every_answer_surface():
 
 
 def test_grafana_mcp_is_imported_and_instantiated():
-    """Hackathon requirement: the partner's MCP server is imported and explicitly
-    called in the code path a run takes -- not mocked."""
+    """Grafana's MCP server is imported and instantiated in the code path a real
+    run takes, rather than mocked.
+
+    Worth asserting because a toolset that is only ever faked in tests is a
+    toolset nobody notices has stopped being wired up."""
     from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
     from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 
@@ -370,8 +372,12 @@ def test_startup_refuses_incomplete_config(monkeypatch, over):
     assert rc == 2
 
 
-def test_repo_is_submission_compliant():
-    """Edge (submission compliance): OSS license + runnable init instructions."""
+def test_the_repo_is_usable_by_someone_who_just_cloned_it():
+    """An OSS licence and init instructions that actually run.
+
+    The failure this guards against is quiet: a README whose quickstart drifted
+    away from the commands that work, found by the one person least equipped to
+    debug it -- someone seeing the project for the first time."""
     licence = (REPO / "LICENSE").read_text()
     assert "Apache License" in licence and "Version 2.0" in licence
 
@@ -428,7 +434,7 @@ def test_the_playground_ships_in_the_image():
             f"{name} excludes web/, so the deployed page would lose its assets"
 
     web = REPO / "web"
-    for asset in ("index.html", "banner.png", "favicon.svg"):
+    for asset in ("index.html", "app.js", "favicon.svg"):
         assert (web / asset).is_file(), f"web/{asset} is referenced by the page"
 
 

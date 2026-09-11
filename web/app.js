@@ -4,9 +4,9 @@
 // inline <script> would have forced either 'unsafe-inline' (no wall at all) or a
 // per-response nonce (a template engine, for one page).
 
-// The four questions verified cold against the live stack (docs/DEMO.md). Each
-// is here to prove a different claim, so the label says which -- a judge with
-// sixty seconds should not have to guess what to type or why.
+// Four questions, each verified cold against the live stack. Each one exercises
+// a different claim, so the label says which -- someone arriving with a minute to
+// spare should not have to guess what to type, or why it is worth typing.
 const SAMPLES = [
   ["Why is SEQ0420 slipping, and what is it costing in artist-days?", "the join, priced"],
   ["Who is heading for crunch, and when?",                            "the privacy floor, live"],
@@ -49,8 +49,8 @@ capacity();
 // The backend view. Every number here came out of Grafana Cloud a few seconds
 // ago; the panel shows the exact query beside each one, because "we query
 // Grafana" and "here is the PromQL that produced 52.7" are different claims.
-// If the stack is unreachable the panel hides itself -- a judge should see a
-// page that is honestly shorter, not one with a broken box in it.
+// If the stack is unreachable the panel hides itself: a page that is honestly
+// shorter beats one with a broken box in it.
 function renderBackend(b) {
   const stats = b.tiles.filter(t => t.kind !== "bars");
   const bars  = b.tiles.filter(t => t.kind === "bars");

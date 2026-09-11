@@ -115,7 +115,7 @@ board (a few extra flash calls; a demo that behaves the same each take).
 - **`gemini-2.5-pro` is 429 quota-locked on this project.** First call,
   `RESOURCE_EXHAUSTED`. Everything runs `gemini-2.5-flash`.
 - **ADK aborts the whole run** with `ValueError: Tool 'x' not found` if a model
-  calls a tool outside its `tool_filter`. Not worth risking on camera to save
+  calls a tool outside its `tool_filter`. Losing a whole run is a poor trade to save
   tool-schema tokens, so all three analysts share one broad read core.
 - **`mcp` 2.x renamed the SDK API**; ADK 2.8 needs `mcp<2`. Pinned `1.29.1`.
 - `SequentialAgent` is deprecated in ADK 2.8 for a `Workflow` type that "cannot
@@ -260,7 +260,7 @@ root*; otherwise it falls back to Google Cloud buildpacks without complaint.
 The Dockerfile was at `deploy/Dockerfile`, so the build would have produced a
 buildpack image with no `mcp-grafana` binary and the wrong entrypoint — a green
 deploy and a service that dies at the first tool call, which is the worst
-possible failure to discover on camera. Fixed by moving the Dockerfile to the
+possible failure to discover late. Fixed by moving the Dockerfile to the
 repo root and making the build explicit: `gcloud builds submit --tag`, then
 both workloads deployed with `--image`, so there is no implicit build path left
 to guess wrong. Pinned by
@@ -380,9 +380,9 @@ it. 364 tests.
 
 ## 2026-09-10 — something to try, and a budget that survives it
 
-Two criticisms of the deployed demo, both fair, both from the position that
-actually matters — a judge with a link and not much time. It was not nice to look
-at, and there was nothing to *try*. The endpoint returned JSON to a browser and
+Two criticisms of the deployed service, both fair, both from the position that
+actually matters — someone arriving with a link and not much time. It was not
+nice to look at, and there was nothing to *try*. The endpoint returned JSON to a browser and
 that was the entire interface. Fixing the 404 at `/` earlier today had made the
 front door answer; it had not made it a door anyone wanted to walk through.
 
@@ -397,7 +397,7 @@ exists and showing the query that performs it.
 
 Three things worth recording from building it.
 
-**The banner was a portrait.** The hackathon card is 1200×630 and I gave it
+**The banner was a portrait.** The hero image was 1200×630 and I gave it
 `width:100%; max-width:440px` plus the intrinsic `width`/`height` attributes —
 and no `height:auto`. The attribute won, so it rendered 440px wide and 614px
 tall, squashed. Nothing in a test would ever have caught that; it took looking at
@@ -444,24 +444,27 @@ excludes it again.
 
 One more, found by re-reading my own claim: the `og:image` was `/banner.png`, a
 relative URL. Scrapers do not run JS and resolve relative paths unreliably, so
-the pasted-link preview — the single place that card genuinely earns its keep —
-would have quietly rendered nothing. It is absolute now, pinned by a test that
-checks the scheme rather than merely the presence of the tag.
+the pasted-link preview — the single place that image genuinely earned its keep
+— would have quietly rendered nothing. Fixed then by making it absolute, pinned
+by a test that checked the scheme rather than merely the presence of the tag.
+
+*(Later: the banner was removed altogether and the page hero is now type. The
+Open Graph tags remain, absolute and tested, minus the image.)*
 
 387 tests.
 
 ## 2026-09-10 — the other side of the glass, without opening the stack
 
-The playground shows a judge the front of the product: a question, an answer, a
-scorecard. It never showed the back — the Grafana Cloud stack all of that is
+The playground shows a visitor the front of the product: a question, an answer,
+a scorecard. It never showed the back — the Grafana Cloud stack all of that is
 read from. The obvious fix is Grafana's own public-dashboard sharing, and it is
 the wrong one for three separate reasons, only one of which I expected.
 
 The one I expected: a natively shared board runs **every panel's query for every
 anonymous visitor**, against the owner's stack, with no per-viewer limit. `/ask`
-is capped three ways; a public dashboard link on a submission page is capped in
-none. The risk is not exfiltration, it is denial of wallet — one scraper and the
-free-tier quota is gone mid-judging.
+is capped three ways; a shared public-dashboard link is capped in none. The risk
+is not exfiltration, it is denial of wallet — one scraper and the free-tier quota
+is gone.
 
 The one I did not expect: the crew board would have published `di-pool-1`.
 `turnaround_pool_headcount` returns 2 for it, live, and "hours per rostered
@@ -469,8 +472,8 @@ artist" for a two-person pool is approximately one person's timesheet. The
 board's own text panel documented this as deliberate — shown for context,
 excluded from every alert. Behind auth that is a defensible internal choice.
 Anonymous, it publishes exactly what `privacy_floor_respected` fails the agent
-for saying. A judge who clicks that check and then clicks the dashboard finds
-the contradiction in about ninety seconds.
+for saying. Anyone who reads that check and then opens the dashboard finds the
+contradiction in about ninety seconds.
 
 The third: the EvalOps log panel selector was bare — `{service_name="turnaround-agent"}`.
 Today that stream carries only evaluation events; I sampled it. But it is

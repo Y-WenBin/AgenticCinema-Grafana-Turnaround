@@ -8,16 +8,12 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta property="og:title" content="Turnaround — crunch is forecastable">
 <meta property="og:description" content="Joins the creative schedule to the render farm in Grafana. Ask it a question and watch the agents work.">
-<!-- og:image must be absolute: link scrapers do not resolve relative URLs
-     reliably and do not run JS, so a relative path silently yields no
-     preview -- which is the one place this card actually earns its keep.
-     Hardcoded to the canonical deployment on purpose; og tags describe the
-     public page, not whichever host happens to be serving the file. -->
+<!-- og:url is absolute and hardcoded to the canonical deployment on purpose:
+     these tags describe the public page, not whichever host happens to be
+     serving the file, and link scrapers do not run JS to work it out. -->
 <meta property="og:url" content="https://turnaround-agent-b465d3vxhq-uc.a.run.app/">
-<meta property="og:image" content="https://turnaround-agent-b465d3vxhq-uc.a.run.app/banner.png">
 <meta property="og:type" content="website">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://turnaround-agent-b465d3vxhq-uc.a.run.app/banner.png">
+<meta name="twitter:card" content="summary">
 <style>
 :root{
   --bg:#090b10; --surface:#12151e; --surface-2:#171b26; --line:#242a3a;
@@ -33,7 +29,7 @@ body{
   font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Inter,Roboto,sans-serif;
   -webkit-font-smoothing:antialiased;
 }
-/* the gradient from the hackathon card, reused as the page's light source */
+/* one accent gradient, used as the page's light source throughout */
 body::before{
   content:"";position:fixed;inset:0 0 auto 0;height:420px;pointer-events:none;
   background:radial-gradient(60% 100% at 20% 0%,rgba(244,81,30,.16),transparent 60%),
@@ -45,12 +41,8 @@ a{color:#8fb4ff}
 code,pre,.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
 
 /* ---------- hero ---------- */
-/* The hackathon card is 1200x630 of mostly whitespace. Held to a size where
-   it reads as a mark rather than a splash screen -- the ask box has to be
-   above the fold on a laptop, because that is the thing to actually try. */
-.banner{display:block;width:100%;max-width:440px;height:auto;margin:0 auto 26px;
-  aspect-ratio:1200/630;  /* width/height attrs are for layout stability, not size */
-  border-radius:12px;box-shadow:0 14px 40px -16px rgba(0,0,0,.8)}
+/* Type, not a splash image. The ask box has to be above the fold on a laptop,
+   because trying it is the point of the page. */
 h1{font-size:clamp(27px,4.4vw,38px);line-height:1.15;margin:0 0 12px;letter-spacing:-.02em}
 h1 .grad{background:var(--edge);-webkit-background-clip:text;background-clip:text;color:transparent}
 .lede{font-size:clamp(16px,2.4vw,19px);color:var(--muted);margin:0 0 8px;max-width:64ch}
@@ -164,9 +156,6 @@ footer pre{background:var(--surface);border:1px solid var(--line);border-radius:
 <body>
 <div class="wrap">
 
-  <img class="banner" src="/banner.png" width="1200" height="630"
-       alt="Agentic Cinema — The Blockbuster Hackathon. Project Turnaround. Grafana and Google Cloud.">
-
   <h1>Crunch is not a surprise.<br><span class="grad">It is forecastable.</span></h1>
 
   <p class="lede">
@@ -219,8 +208,8 @@ footer pre{background:var(--surface);border:1px solid var(--line);border-radius:
       The stack the agents query, read through a <strong>fixed set of queries</strong>.
       The browser sends no parameters, so there is nothing here for a visitor to steer,
       and the crew number carries the privacy floor <em>in its own PromQL</em> rather than
-      in a promise. One upstream query serves every viewer, so a link on a submission
-      page cannot spend someone else's Grafana bill.
+      in a promise. One upstream query serves every viewer, so sharing this link
+      cannot spend someone else's Grafana bill.
     </p>
     <div class="tiles" id="tiles"></div>
     <div class="bars" id="bars"></div>
@@ -277,7 +266,7 @@ footer pre{background:var(--surface);border:1px solid var(--line);border-radius:
       <a href="https://github.com/Y-WenBin/AgenticCinema-Grafana-Turnaround">Source</a> ·
       <a href="/docs">API</a> ·
       <a href="/health">health</a> ·
-      Apache-2.0 · Agentic Cinema, Grafana Labs track
+      Apache-2.0
     </p>
   </footer>
 </div>

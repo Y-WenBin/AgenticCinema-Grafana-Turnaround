@@ -13,8 +13,9 @@ deterministic instead of model-decided:
       3. synthesis          -> the final Answer / Evidence / Remediation block
 
 Every question runs the whole board. It costs a few extra flash calls per run
-and buys a demo that behaves the same way every take (PROJECT.md, "Risks",
-"agent non-determinism on camera").
+and buys a pipeline that answers the same way every run. A coordinator that
+decides which specialists to consult is a coordinator that answers the same
+question two different ways on two different days.
 
 The three analysts are *concurrent* because they are genuinely independent: each
 reads a different plane of the stack, writes its own ``output_key``, and reads

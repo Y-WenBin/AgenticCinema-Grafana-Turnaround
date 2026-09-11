@@ -25,8 +25,8 @@ floor is what the query selects on. The internal dashboard still shows
 simultaneous readers cost Grafana one query, not a thousand. That is the whole
 reason this exists rather than a public dashboard: a natively shared board runs
 every panel for every anonymous visitor, against the owner's quota, with no
-per-viewer limit -- which turns a link on a submission page into a way to spend
-someone else's Grafana bill.
+per-viewer limit -- which turns a shared link into a way to spend someone else's
+Grafana bill.
 
 Nothing here returns `grafana_url`, a datasource UID, or a token. What a viewer
 gets is a number, a caption, and the query that produced it -- and the queries

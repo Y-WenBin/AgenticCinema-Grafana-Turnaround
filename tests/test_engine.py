@@ -372,8 +372,7 @@ def test_the_page_only_calls_endpoints_that_exist():
               + (REPO_ROOT / "web" / "app.js").read_text())
     referenced = set(re.findall(r'(?:fetch\(|src=|href=)"(/[\w./-]*)"', source))
     assert "/app.js" in referenced, "the page must load its own script"
-    assert {"/ask", "/api/capacity", "/api/backend",
-            "/banner.png"} <= referenced, "expected calls missing"
+    assert {"/ask", "/api/capacity", "/api/backend"} <= referenced, "expected calls missing"
 
     routes = {getattr(r, "path", None) for r in serve_mod.app.routes}
     for path in referenced:
@@ -382,15 +381,19 @@ def test_the_page_only_calls_endpoints_that_exist():
         assert path in routes, f"the page calls {path}, which is not a route"
 
 
-def test_the_hackathon_card_is_the_link_preview_not_just_decoration():
-    """A judge meets this project as a pasted link at least as often as a page."""
+def test_a_pasted_link_previews_as_something_other_than_a_bare_url():
+    """People meet this project as a link in a chat window at least as often as
+    a page they navigated to. The card is text -- there is no preview image --
+    so the title and description are all it has, and both must be present and
+    absolute where absolute matters: scrapers do not run JS."""
     html = (REPO_ROOT / "web" / "index.html").read_text()
-    og = re.search(r'property="og:image" content="([^"]+)"', html)
-    assert og, "no og:image, so a pasted link renders as a bare URL"
-    assert og.group(1).startswith("https://"), \
-        "og:image must be absolute -- scrapers do not run JS and resolve relative paths unreliably"
-    assert og.group(1).endswith("/banner.png")
-    assert (REPO_ROOT / "web" / "banner.png").is_file()
+    for prop in ("og:title", "og:description"):
+        tag = re.search(rf'property="{prop}" content="([^"]+)"', html)
+        assert tag and tag.group(1).strip(), f"no {prop}, so a pasted link is a bare URL"
+
+    url = re.search(r'property="og:url" content="([^"]+)"', html)
+    assert url and url.group(1).startswith("https://"), \
+        "og:url must be absolute -- a relative one silently yields no preview"
 
 
 def test_ask_refuses_past_the_cap_without_running_the_pipeline(offline, monkeypatch):

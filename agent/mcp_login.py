@@ -122,7 +122,7 @@ async def _run() -> int:
     provider = OAuthClientProvider(
         server_url=HOSTED_MCP_URL,
         client_metadata=OAuthClientMetadata(
-            client_name="Turnaround (Agentic Cinema hackathon)",
+            client_name="Turnaround",
             redirect_uris=[_REDIRECT_URI],
             grant_types=["authorization_code", "refresh_token"],
             response_types=["code"],

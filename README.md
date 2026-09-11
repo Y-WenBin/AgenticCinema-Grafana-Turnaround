@@ -102,7 +102,7 @@ Analysts are read-only *by construction*, not by prompt — they are wired to an
 | Part | State |
 |---|---|
 | [`bridge/`](bridge/) — ontology, privacy invariants, tool-agnostic source adapters, OTLP emitter | complete, tested |
-| [`seed/`](seed/) — the simulated show *Nightfall* ([`seed/story.md`](seed/story.md)) | complete; numbers measured, not asserted |
+| [`seed/`](seed/) — the simulated production, declared in [`seed/show.yaml`](seed/show.yaml) | complete; numbers measured, not asserted |
 | [`grafana/`](grafana/) — 4 dashboards, alert rules with a lever, Prophet + outlier ML jobs, an EvalOps surface | complete, provisioned by [`grafana/provision.py`](grafana/provision.py) |
 | [`agent/`](agent/) — the deterministic multi-agent pipeline, `mcp-grafana` in two modes (OSS / hosted OAuth), the gated write-back | complete |
 | [`observability/`](observability/) — the agent instruments itself with the OTel GenAI conventions | complete |
@@ -144,7 +144,7 @@ nothing for a visitor to steer — and the crew figure carries the aggregation
 floor in its own PromQL rather than in a promise. One upstream query serves
 every viewer, which is why this exists instead of a natively shared dashboard:
 a public Grafana board runs every panel for every anonymous visitor against the
-owner's quota, so a link on a submission page becomes a way to spend someone
+owner's quota, so sharing the link becomes a way to spend someone
 else's bill.
 
 ## Running it
@@ -174,13 +174,17 @@ Every run self-instruments with the OpenTelemetry GenAI conventions and scores i
 
 The show is **invented**: *Nightfall*, 200 shots over ~21 weeks, generated deterministically by [`seed/model.py`](seed/model.py). Nothing here derives from any studio's real production data.
 
-The generator simulates a *mechanism* rather than writing in a punchline. Two ordinary perturbations — a cache regression and a director note — are applied to an otherwise healthy show, and the iteration counts, render waste and crew hours are whatever falls out. Remove a beat from [`seed/show.yaml`](seed/show.yaml) and the numbers move on their own; forecasting a hard-coded constant would prove nothing.
+The generator simulates a *mechanism* rather than writing in a punchline. Two ordinary perturbations are applied to an otherwise healthy production — a render-cache regression that starts failing one frame of every comp render on a single sequence, and, a week later, a creative note that sends the same sequence back for rework. Neither is unusual on its own. The iteration counts, render waste and crew hours are then whatever falls out of them.
+
+That ordering is the argument for the tool. The rework signal is still weak — a week after the note, with a comp pass taking days, barely two iterations have had time to happen, so a producer watching iteration counts sees almost nothing. The crew-load signal is loud but late: by the time a pool is well past 60 hours, the overtime has already been worked. The render-waste signal was loud from the first day, and lives in a system no producer opens, keyed by a job name no scheduling tool parses.
+
+Nothing is hard-coded. It falls out of one modelling decision — **a retake does not buy calendar** — so the next pass overlaps work already in the artist's window and concurrent load rises. Remove a beat from [`seed/show.yaml`](seed/show.yaml) and the numbers move on their own; forecasting a hard-coded constant would prove nothing.
 
 Job names follow OpenCue's real `<show>-<shot>-<user>_<name>` convention and round-trip through the production parser in the test suite, so the join is exercised on generated data exactly as it would be on a real farm.
 
 ## About this project
 
-I build things at the seam between systems that were never meant to talk to each other — that is where the interesting problems, and usually the wasted human effort, tend to hide. Turnaround started as an entry for the Agentic Cinema hackathon (Grafana Labs track) and kept going because the underlying idea holds up: an industry with a well-documented burnout problem is sitting on the data that predicts it, in tools it already runs.
+I build things at the seam between systems that were never meant to talk to each other — that is where the interesting problems, and usually the wasted human effort, tend to hide. Turnaround kept going past its first sketch because the underlying idea holds up: an industry with a well-documented burnout problem is already sitting on the data that predicts it, in tools it already runs.
 
 The stance is deliberate on both axes. **Technology-agnostic**, because asking a studio to switch trackers or render managers to adopt a diagnostic tool is a non-starter — so the join asks for the least it possibly can, and the adapters are small. **Built for the people doing the work**, because the same measurements can be pointed at a crew to squeeze them harder, and this one is engineered so that is difficult on purpose: pseudonyms, an aggregation floor, no productivity metric, and every alert obliged to carry a fix.
 
