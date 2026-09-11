@@ -538,6 +538,72 @@ def _api_error(code: int, message: str):
                                      "status": "RESOURCE_EXHAUSTED"}})
 
 
+def test_a_quota_refusal_still_halts_cleanly_when_a_task_group_wraps_it(offline):
+    """The analysts run inside ADK's ParallelAgent, which uses an
+    `asyncio.TaskGroup` -- and a TaskGroup wraps whatever its body raises in an
+    ExceptionGroup. `except APIError` does not match `ExceptionGroup(APIError)`,
+    so parallelising the analysts silently turned every Vertex 429 from a
+    one-sentence halt back into a 500 and a forty-line traceback.
+
+    Found live, in Cloud Run logs, after the change shipped.
+    """
+    wrapped = ExceptionGroup("unhandled errors in a TaskGroup",
+                             [_api_error(429, "Resource exhausted.")])
+    offline.setattr(engine, "Runner", _runner_raising(wrapped))
+
+    outcome = asyncio.run(engine.answer_question(
+        "why is SEQ0420 slipping?", approver=AutoApprover(approve=False),
+        conversation_id="t", settings=_cfg(), observability=False, evaluate=False))
+
+    assert outcome.halt is not None, "the group escaped, so this is a 500 again"
+    assert outcome.halt.kind == "model_quota"
+    assert "quota exhausted" in outcome.halt.detail
+
+
+def test_a_wrapped_circuit_breaker_is_still_the_circuit_breaker(offline):
+    """The other exception the run path explains, through the same wrapper.
+    A tripped breaker reported as a generic model error would send someone
+    looking at Vertex for a limit this project set on itself."""
+    from google.adk.agents.invocation_context import LlmCallsLimitExceededError
+
+    wrapped = ExceptionGroup("unhandled errors in a TaskGroup",
+                             [LlmCallsLimitExceededError("Max number of llm calls `40` exceeded")])
+    offline.setattr(engine, "Runner", _runner_raising(wrapped))
+
+    outcome = asyncio.run(engine.answer_question(
+        "why is SEQ0420 slipping?", approver=AutoApprover(approve=False),
+        conversation_id="t", settings=_cfg(), observability=False, evaluate=False))
+
+    assert outcome.circuit_breaker_tripped is True
+    assert "TURNAROUND_MAX_LLM_CALLS" in outcome.halt.advice
+
+
+def test_a_nested_group_is_still_unwrapped(offline):
+    """TaskGroups nest: the analysts sit inside a ParallelAgent inside the
+    runner, so the 429 can arrive one layer deeper than expected."""
+    wrapped = ExceptionGroup("outer", [ExceptionGroup("inner", [_api_error(429, "Resource exhausted.")])])
+    offline.setattr(engine, "Runner", _runner_raising(wrapped))
+
+    outcome = asyncio.run(engine.answer_question(
+        "why is SEQ0420 slipping?", approver=AutoApprover(approve=False),
+        conversation_id="t", settings=_cfg(), observability=False, evaluate=False))
+
+    assert outcome.halt is not None and outcome.halt.kind == "model_quota"
+
+
+def test_an_unexplainable_group_is_re_raised_not_flattened(offline):
+    """Unwrapping must not become a catch-all. A bug in an analyst is not a
+    quota problem, and reporting it as one would send someone to the Vertex
+    console for a KeyError."""
+    wrapped = ExceptionGroup("unhandled errors in a TaskGroup", [ValueError("a real bug")])
+    offline.setattr(engine, "Runner", _runner_raising(wrapped))
+
+    with pytest.raises(ExceptionGroup):
+        asyncio.run(engine.answer_question(
+            "why is SEQ0420 slipping?", approver=AutoApprover(approve=False),
+            conversation_id="t", settings=_cfg(), observability=False, evaluate=False))
+
+
 def test_a_vertex_quota_refusal_halts_cleanly_and_says_what_to_do(offline):
     offline.setattr(engine, "Runner", _runner_raising(_api_error(429, "Resource exhausted.")))
     outcome = asyncio.run(engine.answer_question(

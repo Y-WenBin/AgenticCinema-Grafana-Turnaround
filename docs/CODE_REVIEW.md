@@ -208,6 +208,16 @@ refusal). The CLI prints the halt as one sentence and exits 3 if there is
 nothing to show; `/ask` gains `halted_by` and `halt_detail`, so a quota refusal
 is no longer indistinguishable from "the agent had nothing to say".
 
+> **Follow-up, later.** This fix caught `APIError`, which was right until the
+> three analysts were parallelised. ADK's `ParallelAgent` drives them in an
+> `asyncio.TaskGroup`, and a TaskGroup wraps whatever its body raises in an
+> `ExceptionGroup` — which is not an `APIError`. The quota refusal went straight
+> back to being a 500 with a traceback, and stayed that way until it turned up in
+> Cloud Run logs. `agent/engine.py` now unwraps exception groups before deciding
+> what halted a run, and re-raises anything it cannot explain rather than
+> flattening it into a misleading halt. Three tests in `test_engine.py` cover the
+> wrapped, nested and unexplainable cases.
+
 ## Deliberately not done
 
 - **Pinning the ruff rule set.** `pyproject.toml` sets only `line-length`, so

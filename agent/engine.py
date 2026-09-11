@@ -187,14 +187,27 @@ async def answer_question(
         else:
             await _drive()
     except LlmCallsLimitExceededError as exc:
-        halt = Halt(
-            kind="circuit_breaker",
-            detail=f"circuit breaker tripped: {exc}",
-            advice=(f"raise TURNAROUND_MAX_LLM_CALLS above {cfg.max_llm_calls} if this is a "
-                    "legitimately long run; the default guards against a tool-retry loop"),
-        )
+        halt = _halt_for_limit(exc, cfg)
     except APIError as exc:
         halt = _halt_for(exc, cfg)
+    except BaseExceptionGroup as group:
+        # The analysts run inside ADK's ParallelAgent, which drives them in an
+        # `asyncio.TaskGroup` -- and a TaskGroup wraps whatever its body raises
+        # in an ExceptionGroup. A Vertex 429 therefore arrives here as
+        # `ExceptionGroup(APIError(...))`, which is *not* an APIError, so the
+        # two clauses above miss it and a perfectly explainable quota refusal
+        # escapes as a 500 with a forty-line traceback -- exactly the failure
+        # those clauses were written to prevent.
+        #
+        # This only became reachable when the analysts were parallelised;
+        # sequentially, the same error arrived bare. Anything we cannot explain
+        # is re-raised rather than flattened into a misleading halt.
+        failure = _first_leaf(group, (LlmCallsLimitExceededError, APIError))
+        if failure is None:
+            raise
+        halt = (_halt_for_limit(failure, cfg)
+                if isinstance(failure, LlmCallsLimitExceededError)
+                else _halt_for(failure, cfg))
     finally:
         if obs is not None:
             obs.flush()
@@ -221,6 +234,33 @@ async def answer_question(
             obs.flush()
 
     return outcome
+
+
+def _first_leaf(group: BaseExceptionGroup, kinds: tuple[type, ...]) -> BaseException | None:
+    """The first exception inside a (possibly nested) group matching ``kinds``.
+
+    First rather than all: a run stops for one reason, and when three analysts
+    fail together they have almost always failed for the same reason. The halt
+    names it once instead of reciting it three times.
+    """
+    for exc in group.exceptions:
+        if isinstance(exc, BaseExceptionGroup):
+            found = _first_leaf(exc, kinds)
+            if found is not None:
+                return found
+        elif isinstance(exc, kinds):
+            return exc
+    return None
+
+
+def _halt_for_limit(exc: LlmCallsLimitExceededError, cfg: Settings) -> Halt:
+    """Turnaround's own cost guard, doing its job."""
+    return Halt(
+        kind="circuit_breaker",
+        detail=f"circuit breaker tripped: {exc}",
+        advice=(f"raise TURNAROUND_MAX_LLM_CALLS above {cfg.max_llm_calls} if this is a "
+                "legitimately long run; the default guards against a tool-retry loop"),
+    )
 
 
 def _halt_for(exc: APIError, cfg: Settings) -> Halt:
