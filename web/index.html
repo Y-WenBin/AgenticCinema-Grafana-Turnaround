@@ -21,6 +21,7 @@
   --orange:#f4511e; --purple:#a02fd0; --blue:#3b6ef5;
   --ok:#3ddc97; --warn:#ffb648; --bad:#ff5c6c;
   --edge:linear-gradient(100deg,var(--orange),var(--purple) 52%,var(--blue));
+  --shell:1240px; --gutter:clamp(20px,4vw,64px);
 }
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -31,36 +32,127 @@ body{
 }
 /* one accent gradient, used as the page's light source throughout */
 body::before{
-  content:"";position:fixed;inset:0 0 auto 0;height:420px;pointer-events:none;
-  background:radial-gradient(60% 100% at 20% 0%,rgba(244,81,30,.16),transparent 60%),
-             radial-gradient(60% 100% at 80% 0%,rgba(59,110,245,.18),transparent 60%),
-             radial-gradient(40% 90% at 50% 0%,rgba(160,47,208,.14),transparent 65%);
+  content:"";position:fixed;inset:0 0 auto 0;height:620px;pointer-events:none;z-index:0;
+  background:radial-gradient(44% 100% at 12% 0%,rgba(244,81,30,.16),transparent 64%),
+             radial-gradient(50% 100% at 74% 0%,rgba(59,110,245,.19),transparent 64%),
+             radial-gradient(38% 92% at 44% 0%,rgba(160,47,208,.15),transparent 68%);
 }
-.wrap{position:relative;max-width:860px;margin:0 auto;padding:26px 20px 80px}
 a{color:#8fb4ff}
+a:hover{color:#b8cfff}
 code,pre,.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
 
-/* ---------- hero ---------- */
-/* Type, not a splash image. The ask box has to be above the fold on a laptop,
-   because trying it is the point of the page. */
-h1{font-size:clamp(27px,4.4vw,38px);line-height:1.15;margin:0 0 12px;letter-spacing:-.02em}
-h1 .grad{background:var(--edge);-webkit-background-clip:text;background-clip:text;color:transparent}
-.lede{font-size:clamp(16px,2.4vw,19px);color:var(--muted);margin:0 0 8px;max-width:64ch}
+/* ---------- bands ----------
+   The page is a stack of full-bleed bands, each with its own ground; only the
+   content inside is held to the shell width. A band is what gives a section a
+   horizon of its own instead of everything inheriting one narrow column. */
+.band{position:relative;padding:clamp(52px,6.4vw,104px) 0;z-index:1}
+.band > .inner{position:relative;max-width:var(--shell);margin:0 auto;padding:0 var(--gutter)}
+.band.rule{border-top:1px solid var(--line)}
+.band.lift{background:linear-gradient(180deg,rgba(23,27,38,.55),rgba(9,11,16,0) 88%)}
+.band.deep{background:#070810}
+.band.tight{padding:clamp(30px,3.4vw,52px) 0}
+
+/* ---------- the glass ----------
+   This product shows two things at once: what a person reads, and what the
+   machine did to produce it. So a band that carries both is split, and the
+   seam between them is the panel's own 2px accent rule stood on its end and
+   allowed to fade out. Left of it is prose with air; right of it is mono,
+   denser, on the deeper ground. */
+.duo{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.82fr);align-items:start}
+.duo.wide{grid-template-columns:minmax(0,1.24fr) minmax(0,.76fr)}
+.room{padding-right:clamp(26px,3.2vw,54px);min-width:0}
+.glass{position:relative;padding-left:clamp(26px,3.2vw,54px);
+  border-left:1px solid var(--line);min-width:0}
+.glass::before{content:"";position:absolute;left:-1px;top:0;bottom:0;width:2px;
+  background:linear-gradient(180deg,var(--orange),var(--purple) 26%,var(--blue) 50%,
+             rgba(59,110,245,0) 86%)}
+.stick{position:sticky;top:22px}
+/* names which side of the glass you are looking at */
+.side{display:flex;align-items:center;gap:9px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:11px;text-transform:uppercase;letter-spacing:.11em;color:var(--dim);
+  margin:0 0 18px;font-weight:600}
+.pulse{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:0 0 auto;
+  box-shadow:0 0 0 3px rgba(61,220,151,.15)}
+
+/* ---------- top bar ---------- */
+.topbar{position:relative;z-index:2;border-bottom:1px solid var(--line);
+  background:rgba(9,11,16,.74);backdrop-filter:blur(9px)}
+.bar-in{max-width:var(--shell);margin:0 auto;padding:14px var(--gutter);
+  display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.mark{font-weight:600;font-size:16px;letter-spacing:-.012em}
+.live{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:12.5px;
+  margin-left:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.barnav{display:flex;gap:17px;font-size:13px}
+
+/* ---------- type ---------- */
+h1{font-size:clamp(30px,3.6vw,48px);line-height:1.1;margin:0 0 18px;letter-spacing:-.024em}
+.grad{background:var(--edge);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{font-size:clamp(16px,1.5vw,19.5px);color:var(--muted);margin:0 0 12px;max-width:66ch}
 .lede strong{color:var(--ink);font-weight:600}
-.meta{color:var(--dim);font-size:13.5px;margin:16px 0 26px}
-.meta span{white-space:nowrap}
-.meta i{font-style:normal;color:var(--line);margin:0 10px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
+  margin:0 0 14px;font-weight:600}
+h3{font-size:24px;font-weight:600;margin:0 0 12px;letter-spacing:-.018em;line-height:1.25}
+.say{color:var(--muted);font-size:15px;line-height:1.65;max-width:66ch;margin:0 0 14px}
+.say strong{color:var(--ink);font-weight:600}
+.hint{color:var(--dim);font-size:13px;margin-top:14px;line-height:1.55;max-width:66ch}
+.hint code{color:var(--muted);background:var(--surface-2);padding:1px 5px;border-radius:4px}
+
+/* ---------- the claim ----------
+   The hero says the same thing twice, once on each side of the glass: the
+   headline in English, and across the seam the PromQL that produces it with
+   the number it returned. Both halves are filled from /api/backend, so the
+   figure is never a stale literal baked into the page. The hidden-until-loaded
+   state is an inline style on the element, not a rule here, because app.js
+   reveals it with `style.display = ""` -- which clears an inline style and
+   cannot outrank a stylesheet one. #backendPanel hides itself inline for the
+   same reason. */
+.claim{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+  line-height:1.65;color:var(--muted);word-break:break-word}
+.claim .k{color:var(--dim);display:block;margin-bottom:7px;font-size:10.5px;
+  text-transform:uppercase;letter-spacing:.1em}
+.claim .q{display:block;padding:12px 0 0;border-top:1px solid var(--line);margin-top:14px}
+.out{margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+.out .v{font-size:40px;font-weight:600;letter-spacing:-.03em;line-height:1.1;
+  font-variant-numeric:tabular-nums}
+.out .t{color:var(--muted);font-size:13.5px;margin-top:6px}
+
+/* ---------- agent lanes ----------
+   The three analysts run at the same time, so they are drawn side by side.
+   Each takes one stop of the brand gradient, in the order the gradient runs:
+   schedule, farm, crew. The decoration is the key. */
+.lanes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.lanes.col{grid-template-columns:1fr;gap:18px}
+.lane{--c:var(--dim);border-top:2px solid var(--c);padding-top:13px;min-width:0}
+.lane.sched{--c:var(--orange)}
+.lane.farm{--c:var(--purple)}
+.lane.crew{--c:var(--blue)}
+.lane.after{--c:var(--line)}
+.who{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+  text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--c);
+  display:flex;align-items:center;gap:8px}
+.who .n{margin-left:auto;color:var(--dim);letter-spacing:0;text-transform:none}
+.does{color:var(--dim);font-size:11.5px;margin:5px 0 11px;line-height:1.5}
+.call{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:baseline;
+  padding:9px 0;border-top:1px solid var(--line)}
+.call:first-of-type{border-top:0;padding-top:2px}
+.call .tool{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;
+  color:var(--ink);display:block}
+.call .ms{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+  color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+.readout{display:flex;gap:26px;flex-wrap:wrap;align-items:baseline;
+  padding:16px 0 0;border-top:1px solid var(--line);margin-top:18px}
+.readout .v{font-size:22px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.readout .t{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.09em;
+  margin-top:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 
 /* ---------- panels ---------- */
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;
-  padding:22px;margin:0 0 20px;position:relative;overflow:hidden}
+  padding:32px;margin:0 0 20px;position:relative;overflow:hidden}
 .panel::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;background:var(--edge);opacity:.85}
-h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
-  margin:0 0 14px;font-weight:600}
 
 /* ---------- ask ---------- */
-textarea{width:100%;min-height:76px;resize:vertical;background:var(--bg);
-  color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:13px 14px;
+textarea{width:100%;min-height:88px;resize:vertical;background:var(--bg);
+  color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:15px 16px;
   font:inherit;line-height:1.5}
 textarea:focus{outline:none;border-color:#3f4c6b;box-shadow:0 0 0 3px rgba(59,110,245,.16)}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 4px}
@@ -73,31 +165,38 @@ textarea:focus{outline:none;border-color:#3f4c6b;box-shadow:0 0 0 3px rgba(59,11
 .chip em{font-style:normal;color:var(--dim);font-size:12.5px}
 .row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:16px}
 button.go{background:var(--edge);color:#fff;border:0;border-radius:10px;
-  padding:11px 26px;font:inherit;font-weight:600;cursor:pointer}
+  padding:12px 30px;font:inherit;font-weight:600;cursor:pointer}
 button.go:disabled{opacity:.45;cursor:not-allowed}
 .capacity{color:var(--dim);font-size:13px}
-.hint{color:var(--dim);font-size:13px;margin-top:14px;line-height:1.55}
-.hint code{color:var(--muted);background:var(--surface-2);padding:1px 5px;border-radius:4px}
 
-/* ---------- status ---------- */
-.status{display:none;align-items:center;gap:12px;color:var(--muted);font-size:14.5px;margin-top:16px}
-.status.on{display:flex}
-.spin{width:16px;height:16px;border-radius:50%;flex:0 0 auto;
-  border:2px solid var(--line);border-top-color:var(--blue);animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
+/* ---------- the wait ----------
+   A run is 25-45s and that is the most interesting half-minute in the product:
+   three agents writing their own PromQL against a live stack. A number that
+   moves is proof of work; a spinner is not. So the elapsed figure is the
+   primary signal, and the lanes beside it say what is actually running. */
+#status{display:none}
+#status.on{display:block}
+.elapsed{font-size:46px;font-weight:600;letter-spacing:-.03em;line-height:1;
+  font-variant-numeric:tabular-nums}
+.elapsed .u{font-size:22px;color:var(--dim);letter-spacing:0;font-weight:600}
+.runnote{color:var(--dim);font-size:12.5px;margin:10px 0 22px;line-height:1.55}
 .notice{border-left:3px solid var(--warn);background:rgba(255,182,72,.07);
   padding:12px 15px;border-radius:0 8px 8px 0;margin-top:16px;font-size:14.5px}
 .notice.bad{border-color:var(--bad);background:rgba(255,92,108,.07)}
 
-/* ---------- control room ---------- */
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(162px,1fr));gap:10px}
-.tile{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:13px 14px}
-.tile .v{font-size:26px;font-weight:600;letter-spacing:-.025em;line-height:1.15;
+/* ---------- the live stack ----------
+   A headline number given air instead of a box: a hairline matrix, no fill.
+   auto-fit rather than a fixed track count, so the grid stays flush whatever
+   number of tiles /api/backend returns. */
+.figures{display:grid;grid-template-columns:repeat(auto-fit,minmax(228px,1fr));
+  gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.fig{background:var(--bg);padding:22px 22px 24px;min-width:0}
+.fig .v{font-size:34px;font-weight:600;letter-spacing:-.03em;line-height:1.1;
   font-variant-numeric:tabular-nums}
-.tile .t{color:var(--ink);font-size:12.5px;margin-top:4px;font-weight:500}
-.tile .c{color:var(--dim);font-size:11.5px;margin-top:6px;line-height:1.45}
-.tile.good .v{color:var(--ok)}
-.tile.dead .v{color:var(--dim)}
+.fig.good .v{color:var(--ok)}
+.fig.dead .v{color:var(--dim)}
+.fig .t{font-size:13px;margin-top:8px;font-weight:500}
+.fig .c{color:var(--dim);font-size:11.5px;margin-top:7px;line-height:1.5}
 .bars{margin-top:16px}
 .bar{display:flex;align-items:center;gap:10px;margin-top:7px;font-size:13px}
 .bar .k{width:74px;flex:0 0 auto;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
@@ -124,8 +223,16 @@ button.go:disabled{opacity:.45;cursor:not-allowed}
 /* ---------- results ---------- */
 #out{display:none}
 #out.on{display:block}
-.answer{white-space:pre-wrap;line-height:1.7;font-size:16.5px}
+.answer{white-space:pre-wrap;line-height:1.7;font-size:16.5px;max-width:66ch}
+.runbar{display:flex;align-items:baseline;gap:24px;flex-wrap:wrap;
+  margin:0 0 26px;padding:0 0 22px;border-bottom:1px solid var(--line)}
+.runbar .rq{font-size:25px;letter-spacing:-.02em;line-height:1.3;flex:1 1 460px}
+.runbar .rm{display:flex;gap:10px;align-items:center;color:var(--dim);font-size:12.5px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.runbar .rm i{font-style:normal;color:var(--line)}
 .scores{display:flex;flex-wrap:wrap;gap:8px}
+.scores.stack{flex-direction:column;align-items:stretch;gap:7px}
+.scores.stack .score .n{margin-left:auto}
 .score{display:flex;align-items:center;gap:7px;background:var(--surface-2);
   border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-size:13.5px}
 .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
@@ -146,131 +253,274 @@ details summary{cursor:pointer;color:var(--muted);font-size:14px;list-style:none
 details summary::-webkit-details-marker{display:none}
 details summary::before{content:"▸ ";color:var(--dim)}
 details[open] summary::before{content:"▾ "}
-footer{color:var(--dim);font-size:13.5px;border-top:1px solid var(--line);
-  margin-top:44px;padding-top:22px}
+
+/* ---------- footer ---------- */
+footer{color:var(--dim);font-size:13.5px}
 footer pre{background:var(--surface);border:1px solid var(--line);border-radius:10px;
   padding:13px 15px;overflow-x:auto;font-size:12.5px;color:var(--muted)}
-@media(max-width:560px){.wrap{padding:20px 15px 60px}.panel{padding:17px}}
+.footcols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.32fr);
+  gap:34px;align-items:start}
+.footcols h4{font-size:11px;text-transform:uppercase;letter-spacing:.09em;
+  color:var(--dim);margin:0 0 10px;font-weight:600}
+.footcols p{margin:0 0 10px;line-height:1.6}
+.footend{display:flex;gap:18px;flex-wrap:wrap;align-items:center;
+  margin-top:30px;padding-top:20px;border-top:1px solid var(--line)}
+
+/* ---------- collapse ----------
+   The glass survives: the two planes stack, the seam stays on the left, and
+   the machine side reads as indented behind it. */
+@media(max-width:1060px){
+  .duo,.duo.wide{grid-template-columns:1fr}
+  .room{padding-right:0;padding-bottom:30px}
+  .glass{padding-left:20px}
+  .stick{position:static}
+  .lanes{grid-template-columns:1fr;gap:20px}
+  .footcols{grid-template-columns:1fr}
+}
+@media(max-width:560px){
+  .band{padding:38px 0}
+  .band.tight{padding:26px 0}
+  .band > .inner{padding:0 18px}
+  .bar-in{padding:12px 18px;gap:12px}
+  .barnav{display:none}
+  .panel{padding:24px}
+  .figures{grid-template-columns:1fr}
+  .fig{padding:18px}
+  .runbar .rq{font-size:20px}
+  .elapsed{font-size:38px}
+}
 </style>
 </head>
 <body>
-<div class="wrap">
 
-  <h1>Crunch is not a surprise.<br><span class="grad">It is forecastable.</span></h1>
+<header class="topbar">
+  <div class="bar-in">
+    <span class="mark"><span class="grad">Turnaround</span></span>
+    <span class="live"><i class="pulse"></i>live Grafana Cloud · re-seeded every 15 min</span>
+    <nav class="barnav">
+      <a href="https://github.com/Y-WenBin/AgenticCinema-Grafana-Turnaround">Source</a>
+      <a href="/docs">API</a>
+      <a href="/health">health</a>
+    </nav>
+  </div>
+</header>
 
-  <p class="lede">
-    Turnaround joins a VFX show's <strong>creative schedule</strong> to its
-    <strong>render farm</strong> inside Grafana — a join no product on the market
-    makes — then forecasts delivery slip and crew burnout <em>together</em>, while
-    the schedule can still be renegotiated.
-  </p>
-  <p class="lede">
-    The agents below are read-only <em>by construction</em>. Ask one a question.
-  </p>
-
-  <p class="meta">
-    <span>Gemini 2.5 Flash on Vertex</span><i>·</i>
-    <span>Google ADK multi-agent</span><i>·</i>
-    <span>Grafana Cloud via MCP</span><i>·</i>
-    <span>live data, re-seeded every 15 min</span>
-  </p>
-
-  <section class="panel">
-    <h2>Ask the agents</h2>
-    <textarea id="q" maxlength="500" spellcheck="false"
-      placeholder="Why is SEQ0420 slipping, and what is it costing in artist-days?"></textarea>
-
-    <div class="chips" id="chips"></div>
-
-    <div class="row">
-      <button class="go" id="go">Ask</button>
-      <span class="capacity" id="cap"></span>
-    </div>
-
-    <div class="status" id="status"><span class="spin"></span><span id="statusText"></span></div>
-    <div id="err"></div>
-
-    <p class="hint">
-      A run usually takes <strong>25–45 seconds</strong>, sometimes more: five agents
-      — the three analysts working in parallel — each writing and running its own
-      PromQL, LogQL and TraceQL against a live Grafana Cloud stack, then a judge tier
-      scoring the answer. Nearly all of that is waiting on the model, so it varies.
-      Everything below is produced live — nothing is canned.
-      <br><br>
-      It knows one invented show, <em>Nightfall</em>: sequences <code>SEQ0010</code>–<code>SEQ0430</code>,
-      departments <code>previz layout anim fx lighting comp di</code>. Ask outside that and it will
-      correctly tell you it wasn't measured.
-    </p>
-  </section>
-
-  <section class="panel" id="backendPanel" style="display:none">
-    <h2>The other side of the glass — live Grafana Cloud</h2>
-    <p class="hint" style="margin:-4px 0 16px">
-      The stack the agents query, read through a <strong>fixed set of queries</strong>.
-      The browser sends no parameters, so there is nothing here for a visitor to steer,
-      and the crew number carries the privacy floor <em>in its own PromQL</em> rather than
-      in a promise. One upstream query serves every viewer, so sharing this link
-      cannot spend someone else's Grafana bill.
-    </p>
-    <div class="tiles" id="tiles"></div>
-    <div class="bars" id="bars"></div>
-    <details id="qDetails" style="margin-top:18px">
-      <summary id="qSummary"></summary>
-      <div class="scroll" style="margin-top:12px">
-        <table class="tl"><thead><tr>
-          <th>tile</th><th>source</th><th class="q">query</th>
-        </tr></thead><tbody id="qBody"></tbody></table>
+<!-- ── the thesis, stated once on each side of the glass ──────────────── -->
+<section class="band">
+  <div class="inner">
+    <div class="duo wide">
+      <div class="room">
+        <h1>Crunch is not a surprise.<br><span class="grad">It is forecastable.</span></h1>
+        <p class="lede">
+          Turnaround joins a VFX show's <strong>creative schedule</strong> to its
+          <strong>render farm</strong> inside Grafana — a join no product on the market
+          makes — then forecasts delivery slip and crew burnout <em>together</em>, while
+          the schedule can still be renegotiated.
+        </p>
+        <p class="lede" style="margin-top:18px">
+          The agents below are read-only <em>by construction</em>. Ask one a question.
+        </p>
       </div>
-    </details>
-    <p class="hint" id="backendNote"></p>
+
+      <aside class="glass stick" id="heroClaim" style="display:none">
+        <p class="side"><i class="pulse"></i>the other side of the glass</p>
+        <div class="claim">
+          <span class="k">the sentence above, as the stack states it</span>
+          <span class="q" id="heroQuery"></span>
+        </div>
+        <div class="out">
+          <div class="v" id="heroValue"></div>
+          <div class="t" id="heroCaption"></div>
+        </div>
+        <p class="hint" style="margin-top:20px">
+          Nothing on this page is written by hand. Every number is a query you can read,
+          run and disagree with — that is the whole product.
+        </p>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ── the console, and the machine it starts ─────────────────────────── -->
+<section class="band rule lift">
+  <div class="inner">
+    <div class="duo">
+      <div class="room">
+        <h2>Ask the agents</h2>
+        <textarea id="q" maxlength="500" spellcheck="false"
+          placeholder="Why is SEQ0420 slipping, and what is it costing in artist-days?"></textarea>
+
+        <div class="chips" id="chips"></div>
+
+        <div class="row">
+          <button class="go" id="go">Ask</button>
+          <span class="capacity" id="cap"></span>
+        </div>
+
+        <div id="err"></div>
+
+        <p class="hint">
+          It knows one invented show, <em>Nightfall</em>: sequences <code>SEQ0010</code>–<code>SEQ0430</code>,
+          departments <code>previz layout anim fx lighting comp di</code>. Ask outside that and it will
+          correctly tell you it wasn't measured. Everything below is produced live — nothing is canned.
+        </p>
+      </div>
+
+      <aside class="glass">
+        <div id="status">
+          <p class="side"><i class="pulse"></i>running now</p>
+          <div class="elapsed"><span id="statusText">0</span><span class="u">s</span></div>
+          <p class="runnote" id="statusNote"></p>
+        </div>
+
+        <p class="side">what pressing Ask starts</p>
+        <div class="lanes col">
+          <div class="lane sched">
+            <div class="who">schedule <span class="n">≤6 calls</span></div>
+            <p class="does">Reads the show's own calendar — iterations, director's notes, sign-offs.</p>
+          </div>
+          <div class="lane farm">
+            <div class="who">farm <span class="n">≤6 calls</span></div>
+            <p class="does">Reads the render wall — waste, failure rates, the log line that explains them.</p>
+          </div>
+          <div class="lane crew">
+            <div class="who">crew <span class="n">≤6 calls</span></div>
+            <p class="does">Reads hours logged, never below a pool of three. The floor is in the query.</p>
+          </div>
+        </div>
+
+        <p class="hint" style="margin-top:20px">
+          Those three run <strong>at the same time</strong> — which is why the gradient on this
+          page runs in their order. A remediator then drafts a fix it is not allowed to apply,
+          and a synthesis agent may only use numbers the three already returned.
+        </p>
+
+        <div class="readout">
+          <div><div class="v">5</div><div class="t">agents</div></div>
+          <div><div class="v">≤40</div><div class="t">model calls</div></div>
+          <div><div class="v">25–45s</div><div class="t">typical</div></div>
+          <div><div class="v">6</div><div class="t">checks after</div></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ── the answer, and the machine that produced it ───────────────────── -->
+<div id="out">
+  <section class="band rule tight">
+    <div class="inner">
+      <div class="runbar">
+        <div class="rq" id="askedQ"></div>
+        <div class="rm" id="runMeta"></div>
+      </div>
+
+      <div class="duo">
+        <div class="room">
+          <p class="side">what you asked for</p>
+          <div class="answer" id="answer"></div>
+        </div>
+
+        <aside class="glass stick" id="scoresPanel">
+          <p class="side"><i class="pulse"></i>how it scored itself</p>
+          <div class="scores stack" id="scores"></div>
+          <p class="hint" id="scoresNote"></p>
+        </aside>
+      </div>
+    </div>
   </section>
 
-  <div id="out">
-    <section class="panel">
-      <h2>Answer</h2>
-      <div class="answer" id="answer"></div>
-    </section>
+  <section class="band rule">
+    <div class="inner">
+      <h3>How it got there</h3>
+      <p class="say">
+        The three analysts ran <strong>concurrently</strong> — these columns are simultaneous,
+        not sequential. Only after all three returned could a remediator draft a fix, and only
+        then could synthesis write a sentence, using nothing the three had not already measured.
+      </p>
+      <div class="lanes" id="laneMap" style="margin-top:30px"></div>
+      <div class="lanes" id="laneAfter" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:34px"></div>
 
-    <section class="panel" id="scoresPanel">
-      <h2>The run scored itself</h2>
-      <div class="scores" id="scores"></div>
-      <p class="hint" id="scoresNote"></p>
-    </section>
-
-    <section class="panel">
-      <h2>How it got there</h2>
-      <details id="tlDetails">
+      <details id="tlDetails" style="margin-top:40px">
         <summary id="tlSummary"></summary>
         <div class="scroll" style="margin-top:14px">
           <table class="tl"><thead><tr>
             <th>#</th><th>agent</th><th>tool</th><th class="q">query</th><th class="ms">ms</th>
           </tr></thead><tbody id="tlBody"></tbody></table>
         </div>
-        <p class="hint"><span class="star">✱</span> = a call into Grafana Cloud over MCP.</p>
+        <p class="hint"><span class="star">✱</span> = a call into Grafana Cloud over MCP.
+          Timings are the round trip to Grafana, not the model.</p>
       </details>
-    </section>
-  </div>
-
-  <footer>
-    <p>
-      <strong>Read-only by construction.</strong> The analysts are wired to an
-      <code>mcp-grafana</code> started <code>--disable-write</code>; the public endpoint runs
-      <code>AutoApprover(approve=False)</code>, so nothing here can mutate anything. The write-back
-      path exists, and needs a supervisor's approval in the CLI.
-    </p>
-    <p><strong>Not a surveillance tool.</strong> Artists appear only as salted pseudonyms, and
-      no crew-load signal is emitted for a pool of fewer than three people — a test fails the
-      build if an answer names one.</p>
-    <p>Same thing from a terminal:</p>
-    <pre id="curl"></pre>
-    <p>
-      <a href="https://github.com/Y-WenBin/AgenticCinema-Grafana-Turnaround">Source</a> ·
-      <a href="/docs">API</a> ·
-      <a href="/health">health</a> ·
-      Apache-2.0
-    </p>
-  </footer>
+    </div>
+  </section>
 </div>
+
+<!-- ── the stack at rest ──────────────────────────────────────────────── -->
+<section class="band rule" id="backendPanel" style="display:none">
+  <div class="inner">
+    <h3>The other side of the glass, right now</h3>
+    <p class="say">
+      The stack the agents query, read through a <strong>fixed set of queries</strong>.
+      The browser sends no parameters, so there is nothing here for a visitor to steer, and
+      the crew number carries the privacy floor <em>in its own PromQL</em> rather than in a
+      promise. One upstream query serves every viewer, so sharing this link cannot spend
+      someone else's Grafana bill.
+    </p>
+
+    <div class="figures" id="tiles" style="margin-top:34px"></div>
+
+    <div class="duo" style="margin-top:46px">
+      <div class="room">
+        <div class="bars" id="bars"></div>
+      </div>
+      <aside class="glass">
+        <p class="side">how this panel is allowed to read</p>
+        <p class="hint" id="backendNote" style="margin-top:0"></p>
+        <details id="qDetails" style="margin-top:18px">
+          <summary id="qSummary"></summary>
+          <div class="scroll" style="margin-top:12px">
+            <table class="tl"><thead><tr>
+              <th>tile</th><th>source</th><th class="q">query</th>
+            </tr></thead><tbody id="qBody"></tbody></table>
+          </div>
+        </details>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ── footer ─────────────────────────────────────────────────────────── -->
+<section class="band rule deep">
+  <div class="inner">
+    <footer>
+      <div class="footcols">
+        <div>
+          <h4>Read-only by construction</h4>
+          <p>The analysts are wired to an <code>mcp-grafana</code> started
+            <code>--disable-write</code>; the public endpoint runs
+            <code>AutoApprover(approve=False)</code>, so nothing here can mutate anything.
+            The write-back path exists, and needs a supervisor's approval in the CLI.</p>
+        </div>
+        <div>
+          <h4>Not a surveillance tool</h4>
+          <p>Artists appear only as salted pseudonyms, and no crew-load signal is emitted
+            for a pool of fewer than three people — a test fails the build if an answer
+            names one.</p>
+        </div>
+        <div>
+          <h4>Same thing from a terminal</h4>
+          <pre id="curl"></pre>
+        </div>
+      </div>
+      <div class="footend">
+        <a href="https://github.com/Y-WenBin/AgenticCinema-Grafana-Turnaround">Source</a>
+        <a href="/docs">API</a>
+        <a href="/health">health</a>
+        <span>Apache-2.0</span>
+      </div>
+    </footer>
+  </div>
+</section>
 
 <script src="/app.js" defer></script>
 </body>
