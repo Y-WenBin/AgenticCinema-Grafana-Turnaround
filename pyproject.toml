@@ -20,13 +20,10 @@ dependencies = [
   "gazu>=0.10.0",          # Kitsu client: task events + time-spents
   "prometheus-client>=0.21.0",
   "requests>=2.32.0",
-  # Console
-  "fastapi>=0.115.0",
-  "uvicorn[standard]>=0.32.0",
   "pyyaml>=6.0",
 ]
 
-# Five commands rather than five `python -m` invocations. `python -m seed.populate`
+# Four commands rather than four `python -m` invocations. `python -m seed.populate`
 # only ever worked from a checkout (it relies on `pythonpath = ["."]` below); an
 # installed copy needs a real entry point, and `turnaround-<verb> --help` is how
 # someone discovers what the tool can do.
@@ -35,7 +32,6 @@ turnaround-ask = "agent.run:main"
 turnaround-seed = "seed.populate:main"
 turnaround-refresh = "seed.refresh:main"
 turnaround-provision = "grafana.provision:main"
-turnaround-serve = "agent.serve:main"
 
 [project.optional-dependencies]
 # Editorial ingest from any NLE that round-trips OpenTimelineIO (Avid, Premiere,
@@ -51,25 +47,16 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
-# Working files for the interface, not part of the product -- the same reason
-# `.dockerignore` keeps them out of the image. Excluded so `ruff check .` means
-# "the project is clean", which is what the README promises it means.
 # `.venv` is already git-ignored, but ruff only honours that inside a git
 # repo -- from a source tarball `ruff check .` would otherwise lint every
 # dependency. Naming it here makes the command mean the same thing everywhere.
-exclude = [".design", ".venv"]
+exclude = [".venv"]
 
 [tool.hatch.build.targets.wheel]
 # `grafana` belongs here: `turnaround-provision` is a documented setup step, and
 # leaving the package out made it a ModuleNotFoundError in every installed copy
 # while working fine from a checkout, which is the worst of both.
 packages = ["bridge", "agent", "seed", "observability", "grafana"]
-
-# The playground is repo-root `web/` because it is the page the service serves,
-# not part of the agent package. A wheel has no repo root, so it ships inside
-# the package and `agent/serve.py::_web_root` looks in both places.
-[tool.hatch.build.targets.wheel.force-include]
-"web" = "agent/_web"
 
 [build-system]
 requires = ["hatchling"]

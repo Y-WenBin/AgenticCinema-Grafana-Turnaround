@@ -2,9 +2,9 @@
 #
 # The suite is the project's strongest quality claim and until now nothing ran
 # it except a person remembering to. That is also how the packaging bugs
-# survived: `grafana/` and `web/` were missing from the wheel for the whole life
-# of the project and every one of the 450 tests passed, because they all ran
-# from a checkout where those directories are simply there.
+# survived: `grafana/` was missing from the wheel for the whole life of the
+# project and every one of the 450 tests passed, because they all ran from a
+# checkout where that directory is simply there.
 #
 # Hence two jobs. `checkout` is what a contributor runs locally. `wheel` is what
 # a *user* gets, and it deliberately runs from a directory that is not the repo.
@@ -90,7 +90,7 @@ jobs:
         run: |
           cd "$RUNNER_TEMP/install"
           for cmd in turnaround-seed turnaround-refresh turnaround-provision \
-                     turnaround-ask turnaround-serve; do
+                     turnaround-ask; do
             test -x ".venv/bin/$cmd" || { echo "missing console script: $cmd"; exit 1; }
           done
 
@@ -98,11 +98,8 @@ jobs:
         run: |
           cd "$RUNNER_TEMP/install"
           ./.venv/bin/python - <<'PY'
-          import grafana.provision, seed.populate, agent.serve, bridge.ontology  # noqa: F401
-          from agent.serve import WEB
-          assert (WEB / "index.html").is_file(), f"playground missing from the wheel: {WEB}"
-          assert (WEB / "app.js").is_file(), f"playground missing from the wheel: {WEB}"
-          print("ok:", WEB)
+          import grafana.provision, seed.populate, bridge.ontology, agent.engine  # noqa: F401
+          print("ok")
           PY
 
       - name: An installed copy runs the whole simulation offline
@@ -127,35 +124,3 @@ jobs:
           test "$code" -eq 2 || { echo "expected exit 2, got $code"; cat err.txt; exit 1; }
           grep -q "TURNAROUND_PSEUDONYM_SALT" err.txt
           ! grep -q "Traceback" err.txt || { echo "a traceback reached the user"; cat err.txt; exit 1; }
-
-  image:
-    name: docker build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Build the Cloud Run image
-        # Not pushed -- this only asserts the Dockerfile still builds and the
-        # pinned mcp-grafana checksum still matches.
-        run: docker build --progress=plain -t turnaround:ci .
-
-      - name: The image can import its own entry point
-        run: docker run --rm --entrypoint python turnaround:ci -c "import agent.serve; print('ok')"
-
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-
-      - name: The arm64 agent binary is the arm64 one
-        # Runners are amd64, so the step above never touches the other half of
-        # the TARGETARCH branch -- which is the half that was broken: the image
-        # used to carry an amd64 `mcp-grafana` whatever it was built for, and
-        # died at the first tool call with "exec format error".
-        #
-        # Only the `mcp` stage is built here. It is the only stage that varies
-        # by architecture, and it is seconds under emulation where a full
-        # `uv sync` would be minutes. The stage downloads the arm64 tarball,
-        # checks it against the arm64 SHA256, and runs the binary -- so a wrong
-        # checksum or a wrong slug fails right here rather than in a deploy.
-        run: |
-          docker buildx build --progress=plain --platform linux/arm64 \
-            --target mcp --output=type=cacheonly .

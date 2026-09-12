@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -205,7 +206,18 @@ class TestTheExampleFileIsHonest:
 
     #: Only the packages that ship. A key read solely by a test is still dead
     #: weight in the file a user copies.
-    SOURCES = ("agent", "bridge", "seed", "grafana", "observability", "deploy")
+    SOURCES = ("agent", "bridge", "seed", "grafana", "observability")
+
+    #: Keys consumed by a dependency rather than by anything here, so grepping
+    #: our own source cannot find them. Each one needs a reason, because this
+    #: set is the escape hatch that would quietly turn the test back into
+    #: decoration if it grew without argument.
+    READ_BY_A_DEPENDENCY: ClassVar[frozenset[str]] = frozenset({
+        # The OpenTelemetry SDK reads this itself when it builds an exporter
+        # (opentelemetry.sdk.environment_variables). Our code never names it,
+        # and the OTLP endpoint is useless without it.
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+    })
 
     @staticmethod
     def _keys() -> list[str]:
@@ -233,8 +245,7 @@ class TestTheExampleFileIsHonest:
                 for path in root.rglob("*"):
                     if path.suffix in (".py", ".sh", ".yaml", ".yml") and path.is_file():
                         haystack += path.read_text()
-        haystack += (REPO_ROOT / "Dockerfile").read_text()
-        assert key in haystack, (
+        assert key in haystack or key in self.READ_BY_A_DEPENDENCY, (
             f"{key} is in .env.example but nothing reads it -- delete it, or the "
             "file is telling new users to configure something that does nothing"
         )
@@ -307,27 +318,24 @@ class TestTheDocumentedSetupActuallyWorks:
         assert os.environ["TURNAROUND_PSEUDONYM_SALT"] == generated
         assert not is_placeholder(generated)
 
-    def test_the_limits_in_the_example_file_reach_the_settings(
+    def test_the_ceiling_in_the_example_file_reaches_the_settings(
         self, monkeypatch, tmp_path
     ):
-        """``.env.example`` sets all three with a trailing comment. Reading the
-        file proves nothing; this asserts the numbers arrive."""
-        for key in ("TURNAROUND_ASKS_PER_HOUR", "TURNAROUND_ASKS_PER_DAY",
-                    "TURNAROUND_CONCURRENT_ASKS"):
-            monkeypatch.delenv(key, raising=False)
+        """``.env.example`` writes it with a trailing comment. Reading the file
+        proves nothing; this asserts the number arrives."""
+        monkeypatch.delenv("TURNAROUND_MAX_LLM_CALLS", raising=False)
         load_env(self._example_copy(tmp_path))
-        cfg = settings()
-        assert (cfg.asks_per_hour, cfg.asks_per_day, cfg.concurrent_asks) == (8, 200, 2)
+        assert settings().max_llm_calls == 40
 
-    def test_an_edited_limit_reaches_the_settings_too(self, monkeypatch, tmp_path):
-        """The values above match the defaults, so they would pass even inert.
+    def test_an_edited_ceiling_reaches_the_settings_too(self, monkeypatch, tmp_path):
+        """The value above matches the default, so it would pass even inert.
         This is the one that distinguishes 'applied' from 'coincidence'."""
-        monkeypatch.delenv("TURNAROUND_ASKS_PER_DAY", raising=False)
+        monkeypatch.delenv("TURNAROUND_MAX_LLM_CALLS", raising=False)
         env = self._example_copy(tmp_path)
         env.write_text(env.read_text().replace(
-            "TURNAROUND_ASKS_PER_DAY=200", "TURNAROUND_ASKS_PER_DAY=50"))
+            "TURNAROUND_MAX_LLM_CALLS=40", "TURNAROUND_MAX_LLM_CALLS=90"))
         load_env(env)
-        assert settings().asks_per_day == 50
+        assert settings().max_llm_calls == 90
 
     def test_no_value_in_the_example_file_keeps_a_stray_hash(self, monkeypatch, tmp_path):
         """A generalisation of the bug rather than a re-test of it.

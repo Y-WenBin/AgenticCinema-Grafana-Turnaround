@@ -51,11 +51,12 @@ def env_path() -> Path | None:
     return fallback if fallback.is_file() else None
 
 
-#: A key may be written ``export KEY=value``. Valid shell, and this project's
-#: own ``deploy/deploy.sh`` sources ``.env`` with ``set -a``, so a user whose
-#: file works for the deploy script would otherwise find every ``export`` line
-#: silently invisible to the Python entry points reading the same file. Two
-#: consumers of one file must not disagree about what is in it.
+#: A key may be written ``export KEY=value``. It is valid shell, and a ``.env``
+#: is very often also sourced -- ``set -a && . ./.env`` is in this project's own
+#: docs, and was the documented way to run it before the entry points loaded the
+#: file themselves. A file that works when sourced would otherwise have every
+#: ``export`` line silently invisible to the Python reading the same file, and
+#: two consumers of one file must not disagree about what is in it.
 _EXPORT = "export "
 
 

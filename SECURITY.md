@@ -13,11 +13,13 @@ acknowledgement, and a fix or an explanation of why it is not one — if a repor
 turns out to be intended behaviour, the answer will say why rather than closing
 quietly.
 
-Please do not run scans, load tests or automated exploitation against the hosted
-demo. It is a single small Cloud Run service on a personal billing account, and
-its rate limits are what stand between a curious visitor and a real bill. If you
-need to test something aggressive, run it locally — the whole stack installs in
-two commands.
+The hosted demo is **not** in this repository — the HTTP service, its rate
+limiting and its deployment live in a separate web-application repository, and
+issues in those belong there. Either way, please do not run scans, load tests or
+automated exploitation against it: it is a single small service on a personal
+billing account, and its rate limits are what stand between a curious visitor
+and a real bill. If you need to test something aggressive, run it locally — the
+whole stack installs in two commands.
 
 ## Supported versions
 
@@ -36,10 +38,6 @@ documented rather than oversights.
   can mutate anything, and the approval gate allows a *known read* and asks a
   human about everything else. A tool it does not recognise is gated, not passed
   through ([`agent/approval.py`](agent/approval.py)).
-- **The public endpoint cannot write.** `agent/serve.py` runs
-  `AutoApprover(approve=False)` unconditionally.
-- **No parameters reach a query.** `/api/backend` is a fixed board; the browser
-  sends nothing that reaches PromQL or LogQL ([`agent/backend.py`](agent/backend.py)).
 - **Privacy floor.** Artists are salted HMAC pseudonyms; no crew-load figure may
   describe a pool of fewer than three people, and the floor is written into the
   public board's own PromQL rather than applied afterwards. The exporter refuses
@@ -50,31 +48,23 @@ documented rather than oversights.
 - **No deployment identifiers in the repo.** A shape-based test keeps the
   Grafana stack hostname and the GCP project id out of every tracked file
   ([`tests/test_no_deployment_identifiers.py`](tests/test_no_deployment_identifiers.py)).
-- **Least privilege on the deployment.** The Cloud Run runtime service account
-  holds `roles/aiplatform.user` and nothing else; the Grafana service account is
-  Editor, not Admin, for the reasons in `docs/SETUP.md` §2b.
+- **Least privilege.** The Grafana service account is Editor, not Admin, for the
+  reasons in `docs/SETUP.md` §2b.
 
-**Known and accepted, for a demo:**
+**Known and accepted:**
 
-- **Rate limits are per instance.** The counters in
-  [`agent/limits.py`](agent/limits.py) live in process memory, so with
-  `--max-instances N` the real ceiling is `N ×` what is configured, and a cold
-  start forgets the window early. Exact global limits need shared state; the
-  module says so rather than implying otherwise. Not a vulnerability report.
-- **`X-Forwarded-For` is spoofable.** The per-visitor window is politeness for
-  honest traffic. The daily budget is the control that actually bounds spend,
-  and it does not depend on caller identity.
-- **`/docs` is public by default.** Useful for a reviewer poking at a demo; turn
-  it off with `TURNAROUND_PUBLIC_DOCS=0`.
-- **Model output reaches the page.** Answers and tool arguments are rendered by
-  the playground. Every interpolation goes through `esc()`, and the CSP is the
-  second wall behind it. A way past *both* is very much a report worth making.
+- **A run spends real money.** Every question is a sequence of Gemini calls.
+  `TURNAROUND_MAX_LLM_CALLS` (default 40) is the per-run circuit breaker and is
+  the control that bounds it; ADK's own default is 500. If you expose this
+  library behind anything public, rate limiting is yours to add — it used to
+  live here and moved out with the service.
+- **Model output is not sanitised by this library.** `agent.run` prints answers
+  and tool arguments to a terminal. Anything that renders them as markup is
+  responsible for escaping them.
 
 ## Handling credentials
 
 If you are running your own instance: `.env` is git-ignored and so is
-`.secrets/`, no key file is baked into the image, and `deploy/deploy.sh` pushes
-the Grafana and OTLP credentials to Secret Manager rather than into the service
-YAML. Rotate `TURNAROUND_PSEUDONYM_SALT` per deployment and never reuse the one
+`.secrets/`, and nothing here writes a credential to disk. Rotate `TURNAROUND_PSEUDONYM_SALT` per deployment and never reuse the one
 from any example — a shared salt makes the pseudonyms reversible by anyone who
 can list your crew, which defeats the entire point of them.

@@ -1,10 +1,13 @@
 """One place that asks the Producer a question.
 
-``agent/run.py`` (CLI) and ``agent/serve.py`` (HTTP) are two *presentations* of
-the same run: build the system, instrument it, drive the runner under the
-circuit breaker, score the answer. That pipeline lives here once, so the two
-front ends cannot drift apart -- the CLI only formats text, the endpoint only
-shapes JSON, and neither reaches into the other's internals.
+A run is: build the system, instrument it, drive the runner under the circuit
+breaker, score the answer. All of that lives here, and a front end only formats
+what comes back -- ``agent/run.py`` renders it as console text and an exit code.
+
+The split was made when there were two front ends and the HTTP one was ~70% a
+copy of the CLI. That service now lives in its own repository, and this is what
+let it move without the pipeline being touched: anything calling
+:func:`answer_question` gets the whole run and reaches into none of it.
 
     outcome = await answer_question("why is SEQ0420 slipping?",
                                     approver=AutoApprover(approve=False),
@@ -184,9 +187,9 @@ async def answer_question(
         # toolsets is an `mcp-grafana` stdio subprocess, and the telemetry trio
         # carries a batch processor thread per signal. Nothing releases either
         # on its own -- ADK frees toolsets only from `Runner.close()`, which
-        # `run_async` never calls. A CLI run hides that (the process exits);
-        # `agent/serve.py` builds a fresh system per request, so without this
-        # the instance accumulates subprocesses and threads until it dies.
+        # `run_async` never calls. A CLI run hides that, because the process
+        # exits; anything long-lived calling this in a loop -- a service, a
+        # batch job -- accumulates subprocesses and threads until it dies.
         await _release(runner, obs)
 
 

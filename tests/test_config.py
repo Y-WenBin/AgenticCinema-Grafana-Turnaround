@@ -39,7 +39,7 @@ ENV_KEYS = (
     # The public-endpoint limits and the salt belong here for the same reason as
     # the rest: a value left set by another test, or by `tests/conftest.py`,
     # would let `.env` parsing look correct when it is not.
-    "TURNAROUND_ASKS_PER_HOUR", "TURNAROUND_ASKS_PER_DAY",
+    "TURNAROUND_ASKS_PER_HOUR", "TURNAROUND_MAX_LLM_CALLS",
     "TURNAROUND_CONCURRENT_ASKS", "TURNAROUND_PSEUDONYM_SALT",
     "OTEL_EXPORTER_OTLP_HEADERS",
 )
@@ -140,15 +140,15 @@ class TestTrailingComments:
     """
 
     def test_a_spaced_hash_starts_a_comment(self, clean_env):
-        _write_env(clean_env, "TURNAROUND_ASKS_PER_DAY=50      # everyone together\n")
+        _write_env(clean_env, "TURNAROUND_MAX_LLM_CALLS=50      # everyone together\n")
         load_env()
-        assert os.environ["TURNAROUND_ASKS_PER_DAY"] == "50"
+        assert os.environ["TURNAROUND_MAX_LLM_CALLS"] == "50"
 
     def test_the_limit_actually_reaches_the_settings(self, clean_env):
         """The point of the fix, rather than the mechanism of it."""
-        _write_env(clean_env, "TURNAROUND_ASKS_PER_DAY=50     # bound the bill\n")
+        _write_env(clean_env, "TURNAROUND_MAX_LLM_CALLS=50     # a longer run\n")
         load_env()
-        assert settings().asks_per_day == 50
+        assert settings().max_llm_calls == 50
 
     def test_a_hash_with_no_space_before_it_is_part_of_the_value(self, clean_env):
         """An OTLP base64 payload may contain one, and it is not a comment."""
@@ -385,43 +385,43 @@ class TestAValueWeCannotUseSaysSo:
         config._REJECTED.clear()
 
     def test_an_unset_value_is_not_a_mistake_and_says_nothing(self, clean_env, capsys):
-        assert _int_env("TURNAROUND_ASKS_PER_DAY", 200) == 200
+        assert _int_env("TURNAROUND_MAX_LLM_CALLS", 40) == 40
         assert capsys.readouterr().err == ""
 
     def test_a_value_we_cannot_parse_names_itself_and_the_number_in_force(
         self, clean_env, monkeypatch, capsys
     ):
-        monkeypatch.setenv("TURNAROUND_ASKS_PER_DAY", "50     # bound the bill")
-        assert _int_env("TURNAROUND_ASKS_PER_DAY", 200) == 200
+        monkeypatch.setenv("TURNAROUND_MAX_LLM_CALLS", "50     # a longer run")
+        assert _int_env("TURNAROUND_MAX_LLM_CALLS", 40) == 40
         err = capsys.readouterr().err
-        assert "TURNAROUND_ASKS_PER_DAY" in err
-        assert "50     # bound the bill" in err   # quoted, so the cause is visible
-        assert "200" in err                       # and what is actually in force
+        assert "TURNAROUND_MAX_LLM_CALLS" in err
+        assert "50     # a longer run" in err   # quoted, so the cause is visible
+        assert "40" in err                        # and what is actually in force
 
     def test_zero_where_a_positive_number_belongs_is_reported(
         self, clean_env, monkeypatch, capsys
     ):
         """Someone setting 0 to mean "no limit" gets 200 and needs to know."""
-        monkeypatch.setenv("TURNAROUND_ASKS_PER_DAY", "0")
-        assert _int_env("TURNAROUND_ASKS_PER_DAY", 200) == 200
+        monkeypatch.setenv("TURNAROUND_MAX_LLM_CALLS", "0")
+        assert _int_env("TURNAROUND_MAX_LLM_CALLS", 40) == 40
         assert "greater than zero" in capsys.readouterr().err
 
     def test_it_is_said_once_not_once_per_request(self, clean_env, monkeypatch, capsys):
         """``agent/serve.py`` calls ``load_settings()`` per request."""
-        monkeypatch.setenv("TURNAROUND_ASKS_PER_DAY", "lots")
+        monkeypatch.setenv("TURNAROUND_MAX_LLM_CALLS", "lots")
         for _ in range(5):
-            _int_env("TURNAROUND_ASKS_PER_DAY", 200)
-        assert capsys.readouterr().err.count("TURNAROUND_ASKS_PER_DAY") == 1
+            _int_env("TURNAROUND_MAX_LLM_CALLS", 40)
+        assert capsys.readouterr().err.count("TURNAROUND_MAX_LLM_CALLS") == 1
 
     def test_a_different_bad_value_is_reported_again(
         self, clean_env, monkeypatch, capsys
     ):
         """Deduping on the name alone would swallow the next mistake."""
-        monkeypatch.setenv("TURNAROUND_ASKS_PER_DAY", "lots")
-        _int_env("TURNAROUND_ASKS_PER_DAY", 200)
-        monkeypatch.setenv("TURNAROUND_ASKS_PER_DAY", "loads")
-        _int_env("TURNAROUND_ASKS_PER_DAY", 200)
-        assert capsys.readouterr().err.count("TURNAROUND_ASKS_PER_DAY") == 2
+        monkeypatch.setenv("TURNAROUND_MAX_LLM_CALLS", "lots")
+        _int_env("TURNAROUND_MAX_LLM_CALLS", 40)
+        monkeypatch.setenv("TURNAROUND_MAX_LLM_CALLS", "loads")
+        _int_env("TURNAROUND_MAX_LLM_CALLS", 40)
+        assert capsys.readouterr().err.count("TURNAROUND_MAX_LLM_CALLS") == 2
 
     def test_the_thinking_budget_keeps_its_three_meanings(
         self, clean_env, monkeypatch, capsys

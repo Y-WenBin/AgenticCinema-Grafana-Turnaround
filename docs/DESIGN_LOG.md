@@ -23,6 +23,7 @@ here are true as of their date and are not retro-edited.
 | 2026-09-10 | [Deployed — and three faults only a real run could find](#2026-09-10--deployed--and-three-faults-only-a-real-run-could-find) |
 | 2026-09-10 | [The front door was a 404, and I had already seen it](#2026-09-10--the-front-door-was-a-404-and-i-had-already-seen-it) |
 | 2026-09-10 | [Something to try, and a budget that survives it](#2026-09-10--something-to-try-and-a-budget-that-survives-it) |
+| 2026-09-13 | [The demo moves out](#2026-09-13--the-demo-moves-out) |
 
 ---
 
@@ -521,3 +522,57 @@ it is that anyone reaching for a share button has been told, on the board
 itself, what they would be sharing.
 
 409 tests.
+
+---
+
+## 2026-09-13 — the demo moves out
+
+Everything above this entry describes one repository that was two things: a
+library for joining a schedule to a render farm, and a hosted demo proving it
+works. Today those separate. The web application — `agent/serve.py`,
+`agent/backend.py`, `agent/limits.py`, `web/`, the Dockerfile and `deploy/` —
+moves to its own repository, along with the tests that covered it. Entries
+before this one still describe the whole; they are a record of what was built,
+not of what is here.
+
+The reason is what the two halves are *for*. The demo is a proof of concept for
+one deployment: one billing account, one Cloud Run service, rate limits tuned
+for a public link. Nobody reuses that. The library is the part someone points at
+their own stack, and it was declaring FastAPI and `uvicorn[standard]` to run
+four commands that never serve anything.
+
+A caveat I nearly published without checking: dropping those two does *not*
+mean they stop being installed. `google-adk` requires `fastapi`, `starlette` and
+`uvicorn` itself, so they arrive transitively either way. What actually leaves
+the install is the `[standard]` extra — `uvloop`, `httptools` and `watchfiles` —
+and what the manifest stops doing is claiming a dependency this package does not
+use. Measured on the built wheel rather than assumed, which is the only reason
+the first version of this paragraph is not still wrong.
+
+Three things fell out that are worth recording.
+
+**The split cost nothing structurally, and that was not luck.** `agent/engine.py`
+exists because the CLI and the HTTP endpoint were once ~70% copies of the same
+pipeline; consolidating them into one `answer_question` was a code-review fix
+months before any of this. The payoff arrived today: the service moved without
+the pipeline being touched. Nothing under `bridge/`, `seed/`, `grafana/` or the
+agent tier imported `serve`, `limits` or `backend` — only `serve.py` imported
+*them*. A boundary drawn for one reason held for a different one.
+
+**Removing the service exposed configuration that had quietly died with it.**
+`TURNAROUND_ASKS_PER_HOUR`, `TURNAROUND_ASKS_PER_DAY`, `TURNAROUND_CONCURRENT_ASKS`
+and `TURNAROUND_PUBLIC_DOCS` were still in `.env.example`, still parsed into
+`Settings`, and read by nothing — the exact failure mode P2-3 was about, arriving
+by a different route. The `.env.example` honesty test caught three of the four
+within seconds of the move. It also flagged `OTEL_EXPORTER_OTLP_PROTOCOL`, which
+is a false positive worth keeping: the OpenTelemetry SDK reads that itself, so
+no grep of this source will ever find it. It is now an allowlist of one, with
+the reason written next to it.
+
+**The suite got seven times faster.** 22 s to 3 s, from 601 tests to 510. The
+tests that left were the ones standing up FastAPI and a full ADK system per
+case. Nothing was lost — they moved with the code they test — but it is a fair
+measure of how much of the old suite was exercising the demo rather than the
+product.
+
+510 tests.

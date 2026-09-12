@@ -14,13 +14,20 @@ record — including every bug found on the way — is
 | [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md) | A dated structural review and what changed because of it |
 | [`docs/DESIGN_LOG.md`](docs/DESIGN_LOG.md) | Chronological build record; findings, dated |
 | [`tests/TESTPLAN.md`](tests/TESTPLAN.md) | The reproducibility contract the suite enforces |
-| [`deploy/README.md`](deploy/README.md) | Cloud Run image and deploy script |
 
-**Status.** Data plane, dashboards/alerts/ML, the agent tier, the EvalOps tier
-and the deploy scaffolding are complete and tested. All four representative
-questions are verified cold against the live stack. The suite runs **offline**; `ruff` clean. The
-Cloud Run *deploy run* and a live Kitsu/OpenCue instance are the two open items
-(see [Roadmap](#roadmap)). Runs against a Grafana Cloud stack and a Vertex AI
+**Status.** Data plane, dashboards/alerts/ML, the agent tier and the EvalOps
+tier are complete and tested. All four representative questions are verified
+cold against the live stack. The suite runs **offline**; `ruff` clean. A live
+Kitsu/OpenCue instance is the one open item (see [Roadmap](#roadmap)).
+
+**Scope.** This repository is the library and the CLI — the part you point at
+your own stack. The HTTP service, the browser playground and the Cloud Run
+deployment that make up the hosted demo live in a separate repository: they are
+a proof-of-concept for one deployment rather than something to reuse, and
+keeping them here meant this package declared a web framework it did not use.
+(FastAPI and uvicorn still arrive transitively — `google-adk` requires both —
+so the saving is honesty in the manifest plus the `uvicorn[standard]` extras:
+`uvloop`, `httptools` and `watchfiles` are no longer installed.) Runs against a Grafana Cloud stack and a Vertex AI
 project you supply (`docs/SETUP.md`); the model is `gemini-2.5-flash`.
 Repo: `github.com/Y-WenBin/AgenticCinema-Grafana-Turnaround`.
 
@@ -76,7 +83,7 @@ serves OR scheduling, construction, logistics, legal discovery.
                                                     privacy floor   ML forecasts
                                                                          │ MCP
                                                                          ▼
-                        Cloud Run / CLI: ADK multi-agent on Gemini (Vertex AI)
+                              CLI: ADK multi-agent on Gemini (Vertex AI)
                           producer ─ schedule_analyst · farm_analyst
                                    · crunch_guardian          [read-only]
                                    ─ remediator               [gated]
@@ -185,7 +192,7 @@ Line counts are indicative, not maintained to the digit.
 | File | Lines | Purpose |
 |---|---:|---|
 | [`engine.py`](agent/engine.py) | 257 | **The one run path.** Build, instrument, drive under the circuit breaker, score. Returns a `RunOutcome`; both front ends only present it |
-| [`producer.py`](agent/producer.py) | 129 | `build_system()` → the five-step `SequentialAgent` + shared timeline, gate and ledger |
+| [`producer.py`](agent/producer.py) | 129 | `build_system()` → the three-stage `SequentialAgent` (analysts ∥ → remediator → synthesis) + shared timeline, gate and ledger |
 | [`analysts.py`](agent/analysts.py) | 182 | `schedule_analyst`, `farm_analyst`, `crunch_guardian` — read-only, each with a distinct `output_key` |
 | [`remediator.py`](agent/remediator.py) | 98 | The one write-capable agent; every call goes through the gate and the timeline |
 | [`approval.py`](agent/approval.py) | 154 | `ApprovalGate` + `EvidenceLedger`; `Approver` protocol (`AutoApprover`, `CliApprover`) |
@@ -197,8 +204,6 @@ Line counts are indicative, not maintained to the digit.
 | [`config.py`](agent/config.py) | 201 | `.env` loading, Vertex bootstrap, `Settings` — the only channel for runtime configuration |
 | [`timeline.py`](agent/timeline.py) | 174 | `ToolTimeline` + `TimelineRecorder`: every tool call, Grafana ones marked. The demo's evidence |
 | [`run.py`](agent/run.py) | 114 | CLI presentation: console text + exit code |
-| [`serve.py`](agent/serve.py) | 205 | HTTP presentation: the playground at `/`, `POST /ask`, `GET /health` |
-| [`limits.py`](agent/limits.py) | 211 | Guardrails for the public endpoint: per-visitor window, daily budget, concurrency |
 
 ### `observability/` — the agent watching itself
 
@@ -501,7 +506,7 @@ exists as an opt-in that exercises the interactive-authorization flow. See
 | 3 | Dashboards; ML forecasts; outlier detectors; alert rules | Forecast differs from plan; crew alert fires on comp-pool-2 | ✅ |
 | 4 | MCP read-only + write instances; ADK pipeline; approval gate; write-back | Questions answered cold, with a tool timeline showing real MCP calls | ✅ |
 | 5 | EvalOps: self-instrumentation, judge tier, EvalOps surface | Trace + eval events land in the same stack; drift and privacy alerts evaluate | ✅ |
-| 6 | Cloud Run deploy; supervisor console | Runs end to end against the public URL from a clean browser profile | ✅ deployed — [https://turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app), with a public playground at `/` capped three ways. The *supervisor* console (the approval gate as a UI) is still CLI-only |
+| 6 | Deploy; supervisor console | Runs end to end against the public URL from a clean browser profile | ✅ deployed, from the separate web-application repository. The *supervisor* console (the approval gate as a UI) is still CLI-only |
 
 **Open by decision.** Live Kitsu and OpenCue instances: no container runtime on
 the build machine. Source adapters sit behind Protocols so real instances drop in

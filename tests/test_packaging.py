@@ -6,13 +6,11 @@ distributed as a package. `uv build && pip install` produced something where:
   * ``grafana.provision`` -- a documented setup step in both the README and
     docs/SETUP.md -- raised ``ModuleNotFoundError``, because the package was
     simply not in the wheel;
-  * ``/app.js`` and ``/favicon.svg`` 500'd, because the playground is repo-root
-    ``web/`` and a wheel has no repo root;
   * ``.env`` was looked for inside ``site-packages``, because ``REPO_ROOT``
     resolves to wherever the code was imported from.
 
-All three worked perfectly from a checkout, which is exactly why none of them
-was noticed. These tests assert the declarations that fix them; CI additionally
+Both worked perfectly from a checkout, which is exactly why neither was
+noticed. These tests assert the declarations that fix them; CI additionally
 builds the wheel and drives the installed console scripts, because a manifest
 being right on paper is not the same as a wheel being right.
 """
@@ -43,19 +41,16 @@ class TestWheelContents:
         on_disk = {
             path.parent.name
             for path in REPO_ROOT.glob("*/__init__.py")
-            if path.parent.name not in {"tests", ".design"}
+            if path.parent.name != "tests"
         }
         assert on_disk <= declared, f"not in the wheel: {sorted(on_disk - declared)}"
 
-    def test_the_playground_ships_where_serve_looks_for_it(self, wheel):
-        """`agent/serve.py::_web_root` falls back to `agent/_web`; this is the
-        other half of that contract. If they disagree the failure is a 500 on a
-        page that works fine in development."""
-        from agent.serve import _web_root
-
-        assert wheel["force-include"]["web"] == "agent/_web"
-        assert _web_root().name in {"web", "_web"}
-        assert (_web_root() / "index.html").is_file()
+    def test_the_wheel_ships_no_data_files_it_does_not_need(self, wheel):
+        """The playground used to be force-included into ``agent/_web``. It
+        moved to the web-application repository with the rest of the serving
+        tier, and a stale ``force-include`` would silently ship a directory that
+        is no longer here."""
+        assert "force-include" not in wheel
 
     def test_every_console_script_points_at_something_callable(self):
         """An entry point naming a function that does not exist is a clean
@@ -70,12 +65,12 @@ class TestWheelContents:
             assert callable(getattr(module, attr, None)), f"{name} -> {target} is not callable"
 
     def test_there_is_a_command_for_every_documented_workflow_step(self):
-        """The five things docs/SETUP.md tells a reader to run. A checkout can
+        """The four things docs/SETUP.md tells a reader to run. A checkout can
         use `python -m`; an installed copy cannot, because that relies on the
         `pythonpath = ["."]` pytest setting rather than on the package."""
         targets = set(PYPROJECT["project"]["scripts"].values())
         for module in ("seed.populate:main", "seed.refresh:main",
-                       "grafana.provision:main", "agent.run:main", "agent.serve:main"):
+                       "grafana.provision:main", "agent.run:main"):
             assert module in targets, f"no console script runs {module}"
 
 

@@ -35,8 +35,7 @@ Going further — a live stack, the agent, a real tracker or farm — is
 | Job | What it proves |
 |---|---|
 | `tests` | `ruff check .` and the full suite, on Python 3.12 and 3.13 |
-| `wheel install` | the built wheel works **from outside the repo** — every console script exists, `grafana`/`seed`/`agent` import, the playground ships, and `turnaround-seed --dry-run` runs the whole simulation |
-| `docker build` | the Cloud Run image still builds and the pinned `mcp-grafana` checksum still matches |
+| `wheel install` | the built wheel works **from outside the repo** — every console script exists, `grafana`/`seed`/`agent` import, and `turnaround-seed --dry-run` runs the whole simulation |
 
 The `wheel install` job exists because every packaging bug this project has had
 was invisible from a checkout. If you add a package or a data file, that job is

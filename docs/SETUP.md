@@ -47,8 +47,8 @@ way, so if A works, B is just swapping the data in.
    `google-genai` picks ADC up automatically; leave `GOOGLE_APPLICATION_CREDENTIALS`
    unset in `.env`.
 
-   *Alternative — a service-account key* (needed if ADC isn't available where you
-   run, and what `deploy/` avoids by using the Cloud Run SA):
+   *Alternative — a service-account key* (needed if ADC isn't available where
+   you run; a managed runtime with its own service account avoids it):
    ```bash
    gcloud iam service-accounts create turnaround-local --display-name "Turnaround local"
    gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
@@ -100,8 +100,8 @@ account**. Role **Editor** is enough: the account creates a folder, dashboards,
 alert rules and ML jobs, reads Mimir/Loki/Tempo through MCP, and writes
 annotations — and an Editor can do all of that. Do **not** give it Admin. Admin
 adds the ability to read users, service accounts, API keys and datasource
-secrets, none of which this project touches, and this one token is mounted into
-a publicly reachable Cloud Run service.
+secrets, none of which this project touches. If you later put this behind
+anything publicly reachable, that token goes with it.
 
 Then **Add service account token** → copy the `glsa_…` value.
 
@@ -166,7 +166,7 @@ uv run python -m seed.populate --dry-run   # prints the show, ends "nothing left
 ```
 
 **Installing instead of cloning?** `uv tool install turnaround` (or `pip install`)
-gives you the same five steps as commands, which read `.env` from the directory
+gives you the same four steps as commands, which read `.env` from the directory
 you run them in:
 
 | Command | Same as |
@@ -175,7 +175,6 @@ you run them in:
 | `turnaround-refresh` | `python -m seed.refresh` |
 | `turnaround-provision` | `python -m grafana.provision` |
 | `turnaround-ask` | `python -m agent.run` |
-| `turnaround-serve` | `python -m agent.serve` |
 
 The rest of this guide uses the `python -m` form, since it works from a checkout
 either way.
@@ -233,10 +232,10 @@ reversible by anyone holding a crew list, which is the whole thing they exist to
 prevent. The entry points now refuse to start on that string, and on `change-me`
 — but the fix is to generate a real one.
 
-Every entry point loads `.env` itself — `agent.run`, `agent.serve`,
-`seed.populate`, `seed.refresh` and `grafana.provision`. A variable already
-exported in your shell always wins, so CI and Cloud Run (which set the
-environment directly and ship no `.env`) are unaffected.
+Every entry point loads `.env` itself — `agent.run`, `seed.populate`,
+`seed.refresh` and `grafana.provision`. A variable already exported in your
+shell always wins, so CI and any managed runtime (which set the environment
+directly and ship no `.env`) are unaffected.
 
 ---
 
@@ -426,36 +425,26 @@ work unchanged** — that's the point of the relabel.
 
 ---
 
-## 7. (Optional) deploy the agent to Cloud Run
+## 7. (Optional) serving it over HTTP
 
-Needs `gcloud` installed and authenticated.
+Nothing in this repository serves HTTP. The pipeline is a library and four
+commands; `python -m agent.run "<question>"` is the whole interface, and
+`agent.engine.answer_question` is the one function a service would call.
 
-```bash
-./deploy/deploy.sh          # project from GOOGLE_CLOUD_PROJECT in .env
-```
+The hosted demo — a FastAPI service, a browser playground, per-visitor rate
+limiting and a Cloud Run deployment — lives in a separate web-application
+repository. It is a proof-of-concept for one deployment rather than something to
+reuse, which is why it is not here: this package should not declare a web
+framework to run four commands that never serve anything.
 
-It enables APIs, makes a least-privilege runtime service account
-(`roles/aiplatform.user`), pushes the Grafana + OTLP secrets to Secret Manager,
-builds `./Dockerfile` once, and deploys two things from that one image: the
-agent service, and a **re-seed job** on a 15-minute Cloud Scheduler trigger so
-the compressed window never ages out from under the hosted demo. Then:
+If you are building your own service on top of this, two things from that work
+are worth copying rather than rediscovering:
 
-```bash
-URL=$(gcloud run services describe turnaround-agent --region us-central1 --format 'value(status.url)')
-curl -s "$URL/health" | python3 -m json.tool
-curl -s -H 'content-type: application/json' \
-  -d '{"question":"why is SEQ0420 slipping and what is it costing?"}' "$URL/ask" | python3 -m json.tool
-```
-
-Use `/health`, not `/healthz`: Google Frontend intercepts the exact path
-`/healthz` on `*.run.app` and returns its own HTML 404 without ever reaching the
-container. Same handler, different path.
-
-The service is public so a reviewer can open it. It cannot write anything:
-`serve.py` runs `AutoApprover(approve=False)`, `--max-instances` caps the blast
-radius and `TURNAROUND_MAX_LLM_CALLS` caps the spend of any one request.
-
-Full detail: [`deploy/README.md`](../deploy/README.md).
+- **Gate the writes.** `AutoApprover(approve=False)` is the right default for
+  anything reachable without a human attached; see
+  [`agent/approval.py`](../agent/approval.py).
+- **Cap the spend before you expose it.** `TURNAROUND_MAX_LLM_CALLS` bounds one
+  run. It does not bound how many runs a stranger can start.
 
 ---
 
