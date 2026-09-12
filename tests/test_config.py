@@ -35,6 +35,12 @@ ENV_KEYS = (
     "GOOGLE_GENAI_USE_VERTEXAI", "GRAFANA_DS_PROM_UID", "GRAFANA_DS_LOKI_UID",
     "GRAFANA_DS_TEMPO_UID", "TURNAROUND_MCP_MODE", "TURNAROUND_GEMINI_MODEL",
     "TURNAROUND_MAX_LLM_CALLS", "TURNAROUND_MCP_GRAFANA_BIN",
+    # The public-endpoint limits and the salt belong here for the same reason as
+    # the rest: a value left set by another test, or by `tests/conftest.py`,
+    # would let `.env` parsing look correct when it is not.
+    "TURNAROUND_ASKS_PER_HOUR", "TURNAROUND_ASKS_PER_DAY",
+    "TURNAROUND_CONCURRENT_ASKS", "TURNAROUND_PSEUDONYM_SALT",
+    "OTEL_EXPORTER_OTLP_HEADERS",
 )
 
 
@@ -97,6 +103,62 @@ def test_surrounding_quotes_are_stripped_but_the_value_is_literal(clean_env):
     _write_env(clean_env, 'GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_$NOT_EXPANDED_x"\n')
     load_env()
     assert os.environ["GRAFANA_SERVICE_ACCOUNT_TOKEN"] == "glsa_$NOT_EXPANDED_x"
+
+
+def test_the_last_value_of_a_repeated_key_wins(clean_env):
+    """Because this is the documented way to set the salt:
+
+        echo "TURNAROUND_PSEUDONYM_SALT=$(openssl rand -hex 16)" >> .env
+
+    and a ``.env`` copied from ``.env.example`` already carries that key set to
+    ``change-me``. With first-wins the append did nothing, the entry point
+    refused to start, and the message it printed was the very command the user
+    had just run.
+    """
+    _write_env(clean_env,
+               "TURNAROUND_PSEUDONYM_SALT=change-me\n"
+               "TURNAROUND_PSEUDONYM_SALT=2b5f9c0ad41e7a63\n")
+    load_env()
+    assert os.environ["TURNAROUND_PSEUDONYM_SALT"] == "2b5f9c0ad41e7a63"
+
+
+def test_an_exported_variable_still_beats_the_last_line(clean_env, monkeypatch):
+    """Last-wins is about the file's own lines, not about the environment."""
+    monkeypatch.setenv("GRAFANA_URL", "https://exported.example")
+    _write_env(clean_env, "GRAFANA_URL=https://first\nGRAFANA_URL=https://second\n")
+    load_env()
+    assert os.environ["GRAFANA_URL"] == "https://exported.example"
+
+
+class TestTrailingComments:
+    """``TURNAROUND_ASKS_PER_HOUR=8      # per visitor`` used to parse as the
+    whole string. ``_int_env`` answers an unparseable value with the default, so
+    the three rate limits shipped in ``.env.example`` were inert -- and a user
+    lowering the daily budget to bound a real bill silently kept 200. Nothing
+    looked wrong, because the defaults matched the file.
+    """
+
+    def test_a_spaced_hash_starts_a_comment(self, clean_env):
+        _write_env(clean_env, "TURNAROUND_ASKS_PER_DAY=50      # everyone together\n")
+        load_env()
+        assert os.environ["TURNAROUND_ASKS_PER_DAY"] == "50"
+
+    def test_the_limit_actually_reaches_the_settings(self, clean_env):
+        """The point of the fix, rather than the mechanism of it."""
+        _write_env(clean_env, "TURNAROUND_ASKS_PER_DAY=50     # bound the bill\n")
+        load_env()
+        assert settings().asks_per_day == 50
+
+    def test_a_hash_with_no_space_before_it_is_part_of_the_value(self, clean_env):
+        """An OTLP base64 payload may contain one, and it is not a comment."""
+        _write_env(clean_env, "OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20ab#cd\n")
+        load_env()
+        assert os.environ["OTEL_EXPORTER_OTLP_HEADERS"] == "Authorization=Basic%20ab#cd"
+
+    def test_a_quoted_value_keeps_everything_inside_the_quotes(self, clean_env):
+        _write_env(clean_env, 'GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_a b # c"   # mine\n')
+        load_env()
+        assert os.environ["GRAFANA_SERVICE_ACCOUNT_TOKEN"] == "glsa_a b # c"
 
 
 def test_a_missing_env_file_is_not_an_error(clean_env):

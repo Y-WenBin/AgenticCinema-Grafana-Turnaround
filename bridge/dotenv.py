@@ -51,24 +51,62 @@ def env_path() -> Path | None:
     return fallback if fallback.is_file() else None
 
 
+def _value(raw: str) -> str:
+    """One ``.env`` value: quotes honoured, trailing comment removed.
+
+    An inline comment needs whitespace before the ``#``, and a quoted value has
+    none at all -- the same rule ``python-dotenv`` and Compose use, and the
+    reason it matters here is ``OTEL_EXPORTER_OTLP_HEADERS``, whose base64 may
+    legitimately contain a ``#`` with no space in front of it.
+
+    Before this, ``TURNAROUND_ASKS_PER_HOUR=8      # per visitor`` parsed as the
+    string ``"8      # per visitor"``. ``agent/config.py`` reads it with
+    ``_int_env``, which answers an unparseable value with the default -- so the
+    three rate limits shipped in ``.env.example`` were *inert*, and a user
+    lowering their daily budget to bound a bill silently kept 200. Nothing
+    looked wrong because the defaults matched the file.
+    """
+    value = raw.strip()
+    for quote in ('"', "'"):
+        if value.startswith(quote) and value.find(quote, 1) > 0:
+            return value[1:value.find(quote, 1)]
+    head, hash_, _ = value.partition("#")
+    if hash_ and (not head or head[-1].isspace()):
+        value = head
+    return value.strip()
+
+
 def load_env(path: Path | None = None) -> None:
     """Populate ``os.environ`` from ``.env`` for keys that are not already set.
 
     A real exported variable (CI, Cloud Run, ``set -a && . ./.env``) is never
-    overwritten. Lines are ``KEY=VALUE``; ``#`` comments and blanks are skipped;
-    surrounding quotes on the value are stripped. No interpolation -- values are
-    taken literally, which is what an OTLP auth header needs.
+    overwritten. Lines are ``KEY=VALUE``; blank lines and whole-line ``#``
+    comments are skipped, a trailing comment and surrounding quotes are removed
+    from the value (:func:`_value`). No interpolation -- values are taken
+    literally, which is what an OTLP auth header needs.
+
+    **A repeated key takes its last value**, which is the convention everything
+    else in this space follows and, more to the point, is what makes the
+    documented way of setting the salt work:
+
+        echo "TURNAROUND_PSEUDONYM_SALT=$(openssl rand -hex 16)" >> .env
+
+    A ``.env`` copied from ``.env.example`` already carries that key set to
+    ``change-me``. Appending used to leave the placeholder winning, so the fix
+    that ``docs/SETUP.md`` and the error message both prescribe did nothing and
+    the message repeated itself verbatim.
 
     With no ``path``, :func:`env_path` decides which file that is.
     """
     env_path_ = path or env_path()
     if env_path_ is None or not env_path_.is_file():
         return
+    parsed: dict[str, str] = {}
     for raw in env_path_.read_text().splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
+        parsed[key.strip()] = _value(value)
+    for key, value in parsed.items():
         os.environ.setdefault(key, value)
