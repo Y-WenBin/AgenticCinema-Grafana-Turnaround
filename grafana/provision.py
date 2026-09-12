@@ -18,6 +18,7 @@ from pathlib import Path
 import requests
 
 from bridge.dotenv import load_env
+from bridge.startup import real, reporting, require
 
 HERE = Path(__file__).parent
 FOLDER_UID = "turnaround"
@@ -25,10 +26,13 @@ FOLDER_TITLE = "Turnaround"
 
 
 def _client() -> tuple[requests.Session, str]:
-    url = os.environ.get("GRAFANA_URL", "").rstrip("/")
-    token = os.environ.get("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
-    if not (url and token):
-        sys.exit("GRAFANA_URL / GRAFANA_SERVICE_ACCOUNT_TOKEN unset; see .env.example")
+    url = real(os.environ.get("GRAFANA_URL")).rstrip("/")
+    token = real(os.environ.get("GRAFANA_SERVICE_ACCOUNT_TOKEN"))
+    # `require` rather than `if not (url and token)`: the old check passed on a
+    # freshly copied `.env`, because `https://<your-stack>.grafana.net` is a
+    # non-empty string, and the run failed fifteen frames later on an SSL
+    # handshake against the URL-encoded angle brackets.
+    require(GRAFANA_URL=url, GRAFANA_SERVICE_ACCOUNT_TOKEN=token)
     s = requests.Session()
     s.headers["Authorization"] = f"Bearer {token}"
     return s, url
@@ -112,13 +116,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--only", choices=STEPS, action="append", help="run only these steps")
     args = ap.parse_args()
-    s, url = _client()
-    ensure_folder(s, url)
-    for name, fn in STEPS.items():
-        if args.only and name not in args.only:
-            continue
-        print(f"{name}:")
-        fn(s, url)
+    with reporting():
+        s, url = _client()
+        ensure_folder(s, url)
+        for name, fn in STEPS.items():
+            if args.only and name not in args.only:
+                continue
+            print(f"{name}:")
+            fn(s, url)
     print(f"\ndone. {url}/dashboards/f/{FOLDER_UID}")
 
 

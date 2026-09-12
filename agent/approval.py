@@ -11,6 +11,11 @@ return ``None`` to let the call through, or return a dict to block it and hand
 that dict back to the model as the tool result. The blocked-result text is
 written for the model to read: it explains that a human declined, so the agent
 reports that rather than looping.
+
+**The gate decides on an allowlist of reads, not a blocklist of writes.** A tool
+it does not recognise needs a human, which is the only direction that stays
+correct as ``mcp-grafana`` gains tools nobody here has read about yet. See
+:data:`READ_TOOLS`.
 """
 
 from __future__ import annotations
@@ -20,9 +25,47 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-# Mutating mcp-grafana tools + the Kitsu write-back tool. Anything in this set is
-# gated; anything else the Remediator somehow calls is gated too (deny by
-# default -- see ApprovalGate.before_tool).
+# --------------------------------------------------------------------------- #
+# The privilege boundary: a name-based allowlist of things that cannot mutate
+# --------------------------------------------------------------------------- #
+
+#: Every ``mcp-grafana`` tool that only reads. **This, not ``WRITE_TOOLS``, is
+#: what ``before_tool`` decides on**, and the direction is the whole point:
+#: anything absent is gated, including a tool nobody here has heard of.
+#:
+#: It used to be the other way round -- gate the names on a write list, let
+#: everything else through -- which meant the control was only as complete as
+#: somebody's memory. A new mutating tool appearing in ``mcp-grafana`` (or a
+#: rename of one already listed: ``create_annotation`` becoming
+#: ``annotations_create``, say) would pass the gate untouched, and the failure
+#: would be silent, on the one path in the system that changes a studio's data.
+#: Inverted, the same event costs a *read* tool an unnecessary approval prompt,
+#: which is a nuisance rather than an incident.
+#:
+#: This list is the security policy, so it lives with the gate rather than with
+#: the transport wiring in ``agent/mcp_grafana.py``. ``tests/test_contracts.py``
+#: asserts the two agree -- every tool actually handed to an analyst has to
+#: appear here, or the gate would start prompting on ordinary reads.
+READ_TOOLS = frozenset({
+    # Prometheus / Mimir
+    "query_prometheus", "query_prometheus_histogram",
+    "list_prometheus_metric_names", "list_prometheus_label_names",
+    "list_prometheus_label_values", "list_prometheus_metric_metadata",
+    # Loki
+    "query_loki_logs", "query_loki_stats",
+    "list_loki_label_names", "list_loki_label_values",
+    # Tempo
+    "tempo_traceql-search", "tempo_get-trace", "tempo_traceql-metrics-range",
+    # Annotations and alerting -- reads only; `create_annotation` is a write
+    "get_annotations", "get_annotation_tags",
+    "list_alert_groups", "get_alert_group",
+})
+
+#: The mutating tools the Remediator is wired to reach, plus the Kitsu
+#: write-back. Documentation and a test anchor rather than the decision: the
+#: gate does not consult it, because a set of known writes cannot protect
+#: against an unknown one. Kept so ``tests/test_contracts.py`` can assert that
+#: everything the Remediator *can* call is in fact gated.
 WRITE_TOOLS = frozenset({
     "create_annotation", "update_annotation",
     "create_incident", "add_activity_to_incident",
@@ -139,10 +182,16 @@ class ApprovalGate:
     # -- ADK before_tool_callback shape ------------------------------------- #
 
     def before_tool(self, tool: Any, args: dict[str, Any], tool_context: Any = None) -> dict | None:
+        """Let a known read through; make a human approve everything else.
+
+        Deny by default, which is what the docstring above the tool lists has
+        always claimed and what the code did not do. The cost of the safe
+        direction is one needless prompt if a read tool is ever added to a
+        filter without being added to :data:`READ_TOOLS` -- and
+        ``tests/test_contracts.py`` fails before that can reach anyone.
+        """
         name = getattr(tool, "name", str(tool))
-        if name not in WRITE_TOOLS:
-            # The Remediator's toolset is already narrowed to writes + write-back,
-            # but if a read tool slips in, let it through untouched.
+        if name in READ_TOOLS:
             return None
         agent = getattr(tool_context, "agent_name", "remediator")
         decision = self.review(agent, name, args)

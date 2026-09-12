@@ -125,5 +125,5 @@ def test_the_llm_judge_is_given_the_same_budget(monkeypatch):
     from agent import engine, evaluation
 
     monkeypatch.setattr(evaluation, "vertex_generator", fake_vertex_generator)
-    assert engine.judge_generator(True, "gemini-2.5-flash", 256) is not None
+    assert engine.judge_generator("gemini-2.5-flash", 256) is not None
     assert seen == {"model": "gemini-2.5-flash", "budget": 256}

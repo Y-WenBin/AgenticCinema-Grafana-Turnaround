@@ -23,6 +23,7 @@ from agent.config import (
     Settings,
     _find_mcp_grafana,
     _int_env,
+    _signed_int_env,
     bootstrap_vertex,
     load_env,
     settings,
@@ -35,6 +36,12 @@ ENV_KEYS = (
     "GOOGLE_GENAI_USE_VERTEXAI", "GRAFANA_DS_PROM_UID", "GRAFANA_DS_LOKI_UID",
     "GRAFANA_DS_TEMPO_UID", "TURNAROUND_MCP_MODE", "TURNAROUND_GEMINI_MODEL",
     "TURNAROUND_MAX_LLM_CALLS", "TURNAROUND_MCP_GRAFANA_BIN",
+    # The public-endpoint limits and the salt belong here for the same reason as
+    # the rest: a value left set by another test, or by `tests/conftest.py`,
+    # would let `.env` parsing look correct when it is not.
+    "TURNAROUND_ASKS_PER_HOUR", "TURNAROUND_MAX_LLM_CALLS",
+    "TURNAROUND_CONCURRENT_ASKS", "TURNAROUND_PSEUDONYM_SALT",
+    "OTEL_EXPORTER_OTLP_HEADERS",
 )
 
 
@@ -97,6 +104,62 @@ def test_surrounding_quotes_are_stripped_but_the_value_is_literal(clean_env):
     _write_env(clean_env, 'GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_$NOT_EXPANDED_x"\n')
     load_env()
     assert os.environ["GRAFANA_SERVICE_ACCOUNT_TOKEN"] == "glsa_$NOT_EXPANDED_x"
+
+
+def test_the_last_value_of_a_repeated_key_wins(clean_env):
+    """Because this is the documented way to set the salt:
+
+        echo "TURNAROUND_PSEUDONYM_SALT=$(openssl rand -hex 16)" >> .env
+
+    and a ``.env`` copied from ``.env.example`` already carries that key set to
+    ``change-me``. With first-wins the append did nothing, the entry point
+    refused to start, and the message it printed was the very command the user
+    had just run.
+    """
+    _write_env(clean_env,
+               "TURNAROUND_PSEUDONYM_SALT=change-me\n"
+               "TURNAROUND_PSEUDONYM_SALT=2b5f9c0ad41e7a63\n")
+    load_env()
+    assert os.environ["TURNAROUND_PSEUDONYM_SALT"] == "2b5f9c0ad41e7a63"
+
+
+def test_an_exported_variable_still_beats_the_last_line(clean_env, monkeypatch):
+    """Last-wins is about the file's own lines, not about the environment."""
+    monkeypatch.setenv("GRAFANA_URL", "https://exported.example")
+    _write_env(clean_env, "GRAFANA_URL=https://first\nGRAFANA_URL=https://second\n")
+    load_env()
+    assert os.environ["GRAFANA_URL"] == "https://exported.example"
+
+
+class TestTrailingComments:
+    """``TURNAROUND_ASKS_PER_HOUR=8      # per visitor`` used to parse as the
+    whole string. ``_int_env`` answers an unparseable value with the default, so
+    the three rate limits shipped in ``.env.example`` were inert -- and a user
+    lowering the daily budget to bound a real bill silently kept 200. Nothing
+    looked wrong, because the defaults matched the file.
+    """
+
+    def test_a_spaced_hash_starts_a_comment(self, clean_env):
+        _write_env(clean_env, "TURNAROUND_MAX_LLM_CALLS=50      # everyone together\n")
+        load_env()
+        assert os.environ["TURNAROUND_MAX_LLM_CALLS"] == "50"
+
+    def test_the_limit_actually_reaches_the_settings(self, clean_env):
+        """The point of the fix, rather than the mechanism of it."""
+        _write_env(clean_env, "TURNAROUND_MAX_LLM_CALLS=50     # a longer run\n")
+        load_env()
+        assert settings().max_llm_calls == 50
+
+    def test_a_hash_with_no_space_before_it_is_part_of_the_value(self, clean_env):
+        """An OTLP base64 payload may contain one, and it is not a comment."""
+        _write_env(clean_env, "OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20ab#cd\n")
+        load_env()
+        assert os.environ["OTEL_EXPORTER_OTLP_HEADERS"] == "Authorization=Basic%20ab#cd"
+
+    def test_a_quoted_value_keeps_everything_inside_the_quotes(self, clean_env):
+        _write_env(clean_env, 'GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_a b # c"   # mine\n')
+        load_env()
+        assert os.environ["GRAFANA_SERVICE_ACCOUNT_TOKEN"] == "glsa_a b # c"
 
 
 def test_a_missing_env_file_is_not_an_error(clean_env):
@@ -304,3 +367,101 @@ def test_an_absolute_credentials_path_is_left_alone(clean_env, monkeypatch):
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/abs/sa.json")
     bootstrap_vertex()
     assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == "/abs/sa.json"
+
+
+class TestAValueWeCannotUseSaysSo:
+    """The silence here is why N-2 went unnoticed for the life of the project.
+
+    A trailing comment made every rate limit unparseable, ``_int_env`` answered
+    with the default, and the defaults happened to match the numbers in the
+    file -- so nothing looked wrong anywhere. The parser bug is fixed; this is
+    the reason it was *invisible*, and it would have hidden the next one too.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _forget_previous_warnings(self):
+        config._REJECTED.clear()
+        yield
+        config._REJECTED.clear()
+
+    def test_an_unset_value_is_not_a_mistake_and_says_nothing(self, clean_env, capsys):
+        assert _int_env("TURNAROUND_MAX_LLM_CALLS", 40) == 40
+        assert capsys.readouterr().err == ""
+
+    def test_a_value_we_cannot_parse_names_itself_and_the_number_in_force(
+        self, clean_env, monkeypatch, capsys
+    ):
+        monkeypatch.setenv("TURNAROUND_MAX_LLM_CALLS", "50     # a longer run")
+        assert _int_env("TURNAROUND_MAX_LLM_CALLS", 40) == 40
+        err = capsys.readouterr().err
+        assert "TURNAROUND_MAX_LLM_CALLS" in err
+        assert "50     # a longer run" in err   # quoted, so the cause is visible
+        assert "40" in err                        # and what is actually in force
+
+    def test_zero_where_a_positive_number_belongs_is_reported(
+        self, clean_env, monkeypatch, capsys
+    ):
+        """Someone setting 0 to mean "no limit" gets 200 and needs to know."""
+        monkeypatch.setenv("TURNAROUND_MAX_LLM_CALLS", "0")
+        assert _int_env("TURNAROUND_MAX_LLM_CALLS", 40) == 40
+        assert "greater than zero" in capsys.readouterr().err
+
+    def test_it_is_said_once_not_once_per_request(self, clean_env, monkeypatch, capsys):
+        """Anything long-lived resolves settings more than once -- the HTTP
+        service this used to ship with did it per request."""
+        monkeypatch.setenv("TURNAROUND_MAX_LLM_CALLS", "lots")
+        for _ in range(5):
+            _int_env("TURNAROUND_MAX_LLM_CALLS", 40)
+        assert capsys.readouterr().err.count("TURNAROUND_MAX_LLM_CALLS") == 1
+
+    def test_a_different_bad_value_is_reported_again(
+        self, clean_env, monkeypatch, capsys
+    ):
+        """Deduping on the name alone would swallow the next mistake."""
+        monkeypatch.setenv("TURNAROUND_MAX_LLM_CALLS", "lots")
+        _int_env("TURNAROUND_MAX_LLM_CALLS", 40)
+        monkeypatch.setenv("TURNAROUND_MAX_LLM_CALLS", "loads")
+        _int_env("TURNAROUND_MAX_LLM_CALLS", 40)
+        assert capsys.readouterr().err.count("TURNAROUND_MAX_LLM_CALLS") == 2
+
+    def test_the_thinking_budget_keeps_its_three_meanings(
+        self, clean_env, monkeypatch, capsys
+    ):
+        """0 (off) and -1 (dynamic) are values, not rejects; -2 is neither."""
+        for raw, expected in (("0", 0), ("-1", -1), ("256", 256)):
+            monkeypatch.setenv("TURNAROUND_THINKING_BUDGET", raw)
+            assert _signed_int_env("TURNAROUND_THINKING_BUDGET", 99) == expected
+        assert capsys.readouterr().err == ""
+        monkeypatch.setenv("TURNAROUND_THINKING_BUDGET", "-2")
+        assert _signed_int_env("TURNAROUND_THINKING_BUDGET", 99) == 99
+        assert "-1 (dynamic)" in capsys.readouterr().err
+
+
+class TestTheParserHandlesTheShapesPeopleWrite:
+    """Cases found by probing the phase-2 parser rather than by reading it."""
+
+    def test_a_hash_inside_a_value_does_not_protect_the_real_comment(self, clean_env):
+        """Partitioning on the *first* ``#`` stopped at the payload's own one
+        and left ``   # my token`` in an Authorization header."""
+        _write_env(clean_env, "OTEL_EXPORTER_OTLP_HEADERS=Basic%20ab#cd   # my token\n")
+        load_env()
+        assert os.environ["OTEL_EXPORTER_OTLP_HEADERS"] == "Basic%20ab#cd"
+
+    def test_an_unterminated_quote_is_syntax_not_data(self, clean_env):
+        """A stray ``"`` riding into a token is a 401 nobody can explain."""
+        _write_env(clean_env, 'GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_abc\n')
+        load_env()
+        assert os.environ["GRAFANA_SERVICE_ACCOUNT_TOKEN"] == "glsa_abc"
+
+    def test_an_exported_line_is_still_a_key(self, clean_env):
+        """``deploy/deploy.sh`` sources this same file with ``set -a``, so a
+        user's ``export`` lines work there. Both readers of one file have to
+        agree about what is in it."""
+        _write_env(clean_env, "export GRAFANA_URL=https://stack.grafana.net\n")
+        load_env()
+        assert os.environ["GRAFANA_URL"] == "https://stack.grafana.net"
+
+    def test_a_key_that_merely_starts_with_export_is_untouched(self, clean_env):
+        _write_env(clean_env, "GRAFANA_URL=https://ok\nexported=1\n")
+        load_env()
+        assert os.environ["exported"] == "1"

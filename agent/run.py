@@ -42,6 +42,7 @@ import sys
 from agent import engine
 from agent.approval import AutoApprover, CliApprover
 from agent.engine import HostedMcpNotAuthorized, NotConfigured, RunOutcome
+from bridge.startup import reporting
 
 
 def _report(outcome: RunOutcome) -> None:
@@ -104,10 +105,15 @@ def main() -> None:
     ap.add_argument("--no-eval", action="store_true",
                     help="skip the judge tier (deterministic + LLM evaluation)")
     args = ap.parse_args()
-    raise SystemExit(asyncio.run(ask(
-        args.question, approve=args.approve, interactive=args.interactive,
-        observability=not args.no_observability, evaluate=not args.no_eval,
-    )))
+    # `ask` already reports NotConfigured itself, with the exit code the CLI
+    # contract promises. This catches the other way a half-filled `.env` shows
+    # up here: an unset pseudonym salt raised from inside the telemetry path,
+    # which is nobody's idea of an agent error.
+    with reporting():
+        raise SystemExit(asyncio.run(ask(
+            args.question, approve=args.approve, interactive=args.interactive,
+            observability=not args.no_observability, evaluate=not args.no_eval,
+        )))
 
 
 if __name__ == "__main__":

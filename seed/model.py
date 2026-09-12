@@ -32,6 +32,30 @@ from bridge.ontology import Department, TaskStatus, format_opencue_job_name
 from bridge.privacy import pseudonymize
 
 WORKDAY_HOURS = 8.0
+
+#: The most one artist can be recorded working in one day. Effort above this is
+#: not worked, it is *outstanding*, and it carries to the next day.
+#:
+#: The model accumulates overlapping passes onto the same days on purpose --
+#: that overlap is the crunch mechanism, and removing it would remove the point
+#: of the simulation. What was missing was the other half of how a real
+#: production behaves: a person handed twenty hours of work does not work
+#: twenty hours -- they finish what a day holds and start tomorrow behind.
+#: Without a ceiling the model logged 57.6 hours in a single day and 138
+#: h/artist/week, which is 19.7 hours a day, seven days a week. A producer stops
+#: reading at that number, and takes the believable ones on the same page down
+#: with it.
+#:
+#: 12 is the day that studio overtime language is actually written around, and
+#: the claim this project makes is that its numbers are measured, not that they
+#: are dramatic. It also lands the worst week the show can now produce at 84
+#: h/artist -- brutal, and believable -- while leaving the story intact: comp
+#: pool 2, the pool the show is built to indict, still peaks at 70.7 and is
+#: still climbing at `now`. Sweeping the ceiling from 10 to 16 moves that signal
+#: monotonically and moves nothing else, so the number is a modelling choice
+#: rather than a tuning knob aimed at an outcome.
+MAX_DAILY_HOURS = 12.0
+
 SHOW_FILE = Path(__file__).parent / "show.yaml"
 
 
@@ -100,6 +124,11 @@ class ProductionHistory:
     annotations: list[Annotation] = field(default_factory=list)
     log_lines: list[LogLine] = field(default_factory=list)
     pool_headcount: dict[str, int] = field(default_factory=dict)
+    #: Effort that did not fit under the daily ceiling before the simulation
+    #: horizon -- work the show owes rather than work anyone did. Recorded so
+    #: that capping a day is visible in the totals instead of quietly deleting
+    #: hours. See :meth:`ShowSimulation._settle_time_logs`.
+    hours_outstanding: float = 0.0
 
     def weekly_hours_by_pool(self) -> dict[tuple[str, date], float]:
         """Hours per rostered artist, per pool, per ISO week.
@@ -218,9 +247,66 @@ class ShowSimulation:
                 )
                 shot_index += 1
 
+        self._settle_time_logs(history)
         history.stages.sort(key=lambda s: s.started_at)
         history.renders.sort(key=lambda r: r.started_at)
         return history
+
+    def _settle_time_logs(self, history: ProductionHistory) -> None:
+        """Hold each artist to :data:`MAX_DAILY_HOURS`, carrying the rest forward.
+
+        ``_log_effort`` spreads each pass over the days it occupied, and
+        overlapping passes land on the same days -- deliberately, because that
+        accumulation *is* the crunch. It has no notion of a person, though, so
+        an artist carrying four live passes was logging a day nobody could have
+        worked.
+
+        The queue is the fix a real production uses: the hours do not vanish and
+        they do not compress, they slide. An artist saturated for a fortnight
+        therefore shows up as a *fortnight* at the ceiling rather than one
+        impossible Tuesday, which is both true and a better signal -- sustained
+        saturation is what a producer needs to see coming.
+
+        Effort still queued when the simulation reaches ``now`` has not been
+        worked yet, so it is not logged; it is added to
+        :attr:`ProductionHistory.hours_outstanding` so the drop is stated rather
+        than silent. Settled hours plus outstanding equal the effort that went
+        in.
+        """
+        one_day = timedelta(days=1)
+        horizon = self.now.date()
+
+        by_artist: dict[str, dict[date, float]] = defaultdict(lambda: defaultdict(float))
+        # An artist belongs to one pool and therefore one department, but carry
+        # the attribution rather than assume it: a day the queue invents has to
+        # be billed to the pool whose work it is.
+        attribution: dict[tuple[str, date], tuple[str, Department]] = {}
+        for log in history.time_logs:
+            by_artist[log.artist][log.day] += log.hours
+            attribution[(log.artist, log.day)] = (log.pool, log.department)
+
+        settled: list[TimeLog] = []
+        outstanding = 0.0
+        for artist, days in by_artist.items():
+            day, last = min(days), max(days)
+            pool, department = attribution[(artist, day)]
+            carry = 0.0
+            while day <= horizon and (day <= last or carry > 0.0):
+                pool, department = attribution.get((artist, day), (pool, department))
+                available = days.get(day, 0.0) + carry
+                worked = min(available, MAX_DAILY_HOURS)
+                carry = available - worked
+                if worked > 0.0:
+                    settled.append(
+                        TimeLog(day=day, artist=artist, pool=pool,
+                                department=department, hours=worked)
+                    )
+                day += one_day
+            outstanding += carry
+
+        settled.sort(key=lambda log: (log.day, log.pool, log.artist))
+        history.time_logs = settled
+        history.hours_outstanding = outstanding
 
     def _simulate_shot(
         self,

@@ -1,0 +1,126 @@
+# Everything the README claims about a checkout, on every push and pull request.
+#
+# The suite is the project's strongest quality claim and until now nothing ran
+# it except a person remembering to. That is also how the packaging bugs
+# survived: `grafana/` was missing from the wheel for the whole life of the
+# project and every one of the 450 tests passed, because they all ran from a
+# checkout where that directory is simply there.
+#
+# Hence two jobs. `checkout` is what a contributor runs locally. `wheel` is what
+# a *user* gets, and it deliberately runs from a directory that is not the repo.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The suite is offline by contract (tests/TESTPLAN.md). Nothing here should
+  # ever need a credential; if a test starts wanting one, it has a bug.
+  FORCE_COLOR: "1"
+
+jobs:
+  checkout:
+    name: tests · py${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is `requires-python` and what the Dockerfile ships. 3.13 is the
+        # early warning: a dependency that breaks there breaks the project's
+        # next base image, and finding that out on a Tuesday is cheaper than
+        # finding it out during an upgrade.
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync the locked environment
+        # --frozen: CI must fail on a stale lockfile rather than quietly
+        # resolving something the committed lock does not describe.
+        run: uv sync --frozen --group dev --python ${{ matrix.python }}
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Tests
+        run: uv run pytest -q
+
+  wheel:
+    name: wheel install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Build
+        run: uv build --wheel --out-dir dist
+
+      - name: Install it somewhere that is not the repo
+        # The whole point of this job. Installing into the checkout would let
+        # `REPO_ROOT` keep resolving to the repo and hide every bug it exists
+        # to catch.
+        run: |
+          mkdir -p "$RUNNER_TEMP/install"
+          cd "$RUNNER_TEMP/install"
+          uv venv
+          uv pip install "$GITHUB_WORKSPACE"/dist/*.whl
+
+      - name: Every documented workflow step has a command that runs
+        run: |
+          cd "$RUNNER_TEMP/install"
+          for cmd in turnaround-seed turnaround-refresh turnaround-provision \
+                     turnaround-ask; do
+            test -x ".venv/bin/$cmd" || { echo "missing console script: $cmd"; exit 1; }
+          done
+
+      - name: The packages a documented command needs are in the wheel
+        run: |
+          cd "$RUNNER_TEMP/install"
+          ./.venv/bin/python - <<'PY'
+          import grafana.provision, seed.populate, bridge.ontology, agent.engine  # noqa: F401
+          print("ok")
+          PY
+
+      - name: An installed copy runs the whole simulation offline
+        # The end-to-end proof, and the one command a new user can run before
+        # they have a Grafana Cloud account or a GCP project. `.env` is written
+        # in the working directory, which is nowhere near the installed package
+        # -- that is the discovery path `bridge/dotenv.py::env_path` exists for.
+        run: |
+          cd "$RUNNER_TEMP/install"
+          echo "TURNAROUND_PSEUDONYM_SALT=$(openssl rand -hex 16)" > .env
+          ./.venv/bin/turnaround-seed --dry-run | tee out.txt
+          grep -q "dry run: nothing left this machine" out.txt
+
+      - name: A half-filled .env is refused with a sentence, not a traceback
+        run: |
+          cd "$RUNNER_TEMP/install"
+          printf 'TURNAROUND_PSEUDONYM_SALT=change-me\n' > .env
+          set +e
+          ./.venv/bin/turnaround-seed --dry-run > out.txt 2> err.txt
+          code=$?
+          set -e
+          test "$code" -eq 2 || { echo "expected exit 2, got $code"; cat err.txt; exit 1; }
+          grep -q "TURNAROUND_PSEUDONYM_SALT" err.txt
+          ! grep -q "Traceback" err.txt || { echo "a traceback reached the user"; cat err.txt; exit 1; }

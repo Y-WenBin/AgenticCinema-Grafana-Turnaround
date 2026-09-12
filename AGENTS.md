@@ -92,7 +92,7 @@ patch point and names the layer at each call site. Keep it that way.
 
 ```bash
 uv sync --group dev
-uv run pytest -q          # 446 tests, offline
+uv run pytest -q          # the full suite, offline
 uv run ruff check .
 ```
 

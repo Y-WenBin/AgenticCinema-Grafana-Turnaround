@@ -56,6 +56,45 @@ def test_deterministic_judge_passes_a_grounded_answer():
     assert all(r.actor_type == "deterministic" for r in results.values())
 
 
+class TestTheAnswerIsReadableByAProducer:
+    """The check behind ``figures_are_readable``.
+
+    Taken from a live run against the deployed service, which reported
+    ``lighting-pool-2 at 63.16190476190476h`` in a block the synthesis prompt
+    asks to be written "in plain language for a producer, not an SRE".
+    """
+
+    def _judge(self, answer):
+        return {r.name: r for r in DeterministicJudge().judge(
+            question="who is in crunch?", answer=answer, ledger_chain=[])}
+
+    def test_a_raw_float_fails_and_is_quoted_back(self):
+        answer = ("crew: comp-pool-1 at 70.8h, comp-pool-2 at 79.328h, "
+                  "lighting-pool-2 at 63.16190476190476h")
+        result = self._judge(answer)["figures_are_readable"]
+        assert result.label == "fail"
+        assert result.score == 0.0
+        # the explanation has to name the offender, or nobody can act on it
+        assert "63.16190476190476" in result.explanation
+
+    def test_the_same_answer_rounded_passes(self):
+        result = self._judge(
+            "crew: comp-pool-1 at 70.8h, comp-pool-2 at 79.3h, "
+            "lighting-pool-2 at 63.2h")["figures_are_readable"]
+        assert result.label == "pass"
+
+    def test_two_decimals_are_allowed(self):
+        """A rate quoted as 9.25% is precise, not sloppy. The line is three."""
+        assert self._judge("frame failures at 9.25%")["figures_are_readable"].label == "pass"
+
+    def test_a_version_or_a_date_is_not_a_figure(self):
+        """``mcp-grafana v1.3.0`` and ``2026-09-12`` both carry digits and dots
+        and neither is a measurement. A check that cried wolf on them would be
+        turned off within a week."""
+        answer = "seeded 2026-09-12 with mcp-grafana v1.3.0 against 10.0.0.1"
+        assert self._judge(answer)["figures_are_readable"].label == "pass"
+
+
 def test_deterministic_judge_catches_a_planted_wrong_number():
     bad = "Answer: SEQ0420 comp iterations cost 1.1 core-hours, in line with the rest of the show."
     results = {r.name: r for r in DeterministicJudge().judge(
@@ -141,6 +180,7 @@ def test_run_evaluation_emits_one_event_per_check_correlated_by_response_id():
     events = h.evaluation_events()
     names = {e["gen_ai.evaluation.name"] for e in events}
     assert {"grounding_numbers", "mechanism_named", "privacy_floor_respected",
+            "figures_are_readable",
             "relevance", "hallucination", "task_completion"} <= names
     assert all(e["gen_ai.response.id"] == "resp-77" for e in events)
     assert not scorecard.failed
@@ -152,8 +192,9 @@ def test_run_evaluation_without_llm_still_runs_the_deterministic_checks():
         question="q", answer=GOOD_ANSWER, timeline=_FakeTimeline(),
         ledger=None, response_id=None, telemetry=h.telemetry, llm_generate=None)
     assert {r.name for r in scorecard.results} == {
-        "grounding_numbers", "mechanism_named", "privacy_floor_respected"}
-    assert len(h.evaluation_events()) == 3
+        "grounding_numbers", "mechanism_named", "privacy_floor_respected",
+        "figures_are_readable"}
+    assert len(h.evaluation_events()) == 4
 
 
 def test_run_evaluation_reports_a_privacy_breach_in_the_scorecard():

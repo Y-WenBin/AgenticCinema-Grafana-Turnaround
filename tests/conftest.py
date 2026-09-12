@@ -5,8 +5,8 @@ test configures it, but an autouse reset keeps a stray call in one test from
 bleeding into the next.
 
 The suite is also offline by contract (tests/TESTPLAN.md): no Vertex, no Grafana
-Cloud, no ``mcp-grafana`` binary, and no ``.env``. Three autouse fixtures hold
-that -- see below.
+Cloud, no ``mcp-grafana`` binary, no ``.env``, and nothing written outside the
+test's own tmpdir. The autouse fixtures below hold that.
 """
 
 import os
@@ -64,7 +64,29 @@ def _no_real_dotenv(monkeypatch, tmp_path):
     was no longer the global it resolved against, and five tests in three files
     started reading real credentials. One autouse fixture in one place, so there
     is no second module that has to remember.
+
+    ``env_path`` is patched as well as ``REPO_ROOT``, and it is now the one that
+    matters: the search walks up from the *working directory* so that an
+    installed copy can find the user's ``.env``, and pytest's working directory
+    is the repo -- so without this the suite would read the developer's real
+    credentials from the very first candidate it tried. ``REPO_ROOT`` stays
+    patched because other things resolve against it (``CLOUD_MCP_TOKEN_FILE``).
     """
     from bridge import dotenv
 
     monkeypatch.setattr(dotenv, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(dotenv, "env_path", lambda: tmp_path / ".env")
+
+
+@pytest.fixture(autouse=True)
+def _no_writes_outside_the_tmpdir(monkeypatch, tmp_path):
+    """Keep the write-back audit log inside the test's own directory.
+
+    ``RecordingKitsu`` now defaults its log to the XDG state directory, which is
+    the right home for it and the wrong thing for a suite to append to: a test
+    that constructs one without a path would otherwise leave rows in the
+    developer's ``~/.local/state/turnaround/writeback.jsonl`` and keep them
+    there. The same hermeticity argument as ``_no_real_dotenv`` -- and the same
+    reason for autouse, since the damage is silent.
+    """
+    monkeypatch.setenv("TURNAROUND_WRITEBACK_LOG", str(tmp_path / "writeback.jsonl"))

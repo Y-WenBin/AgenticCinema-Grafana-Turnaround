@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from bridge.dotenv import REPO_ROOT
 from bridge.dotenv import load_env as _load_env
+from bridge.startup import real
 
 # --------------------------------------------------------------------------- #
 # .env loading -- stdlib only, real environment always wins
@@ -47,21 +49,12 @@ load_env = _load_env
 DEFAULT_ANALYST_MODEL = "gemini-2.5-flash"
 
 #: Circuit breaker for a run: the ceiling on Gemini calls across the whole
-#: pipeline, passed to ADK's ``RunConfig(max_llm_calls=...)``. The five-step
+#: pipeline, passed to ADK's ``RunConfig(max_llm_calls=...)``. The five-agent
 #: deterministic pipeline needs ~30 in the worst honest case (each analyst may
 #: retry a query once); ADK's own default is 500, high enough for a stuck
 #: tool-retry loop to burn real money before anything stops it. Override with
 #: ``TURNAROUND_MAX_LLM_CALLS`` for a legitimately longer run.
 DEFAULT_MAX_LLM_CALLS = 40
-
-#: Public-endpoint guardrails. The deployed demo is open -- no key, no signup --
-#: so these are what stands between a curious judge and an unbounded Vertex
-#: bill. They are *per instance* (see ``agent/limits.py``): with
-#: ``--max-instances 2`` the real ceiling is twice DEFAULT_ASKS_PER_DAY, which
-#: is the number to sanity-check against a billing alert, not this one.
-DEFAULT_ASKS_PER_HOUR = 8       # per visitor: enough to explore, not to farm
-DEFAULT_ASKS_PER_DAY = 200      # everyone together: the actual budget
-DEFAULT_CONCURRENT_ASKS = 2     # a run holds an MCP subprocess for ~40s
 
 #: Gemini 2.5 thinking budget, in tokens, for every agent in the pipeline.
 #:
@@ -93,13 +86,46 @@ DEFAULT_CONCURRENT_ASKS = 2     # a run holds an MCP subprocess for ~40s
 DEFAULT_THINKING_BUDGET = 0
 
 
+#: Rejections already reported, so a per-request ``load_settings()`` does not
+#: reprint one line per request. Keyed on the value as well as the name, so
+#: changing a bad value to a different bad value is still reported once.
+_REJECTED: set[tuple[str, str]] = set()
+
+
+def _reject(name: str, raw: str, default: int, why: str) -> int:
+    """Fall back to ``default``, but say so. Once.
+
+    Silence here is what let the rate limits shipped in ``.env.example`` be
+    inert for the life of the project: a trailing comment made every value
+    unparseable, this function answered with the default, and the defaults
+    happened to match the numbers in the file -- so nothing looked wrong
+    anywhere. The parser bug is fixed (``bridge/dotenv.py``), but the reason it
+    was *invisible* was here, and it would have hidden the next one too.
+
+    A value the user did not set is not a mistake and says nothing. A value they
+    set and we cannot use always says something: a typo, a stray unit, ``1_000``
+    or a zero where a positive number belongs is a decision that did not take
+    effect, and a budget that did not take effect is the kind that arrives as a
+    bill.
+    """
+    if (name, raw) not in _REJECTED:
+        _REJECTED.add((name, raw))
+        print(f"({name}={raw!r} ignored: {why}; using {default})", file=sys.stderr)
+    return default
+
+
 def _int_env(name: str, default: int) -> int:
     """A positive integer from the environment, or ``default``."""
-    try:
-        value = int(os.environ.get(name, "").strip())
-        return value if value > 0 else default
-    except (TypeError, ValueError):
+    raw = os.environ.get(name, "").strip()
+    if not raw:
         return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return _reject(name, raw, default, "not a whole number")
+    if value <= 0:
+        return _reject(name, raw, default, "must be greater than zero")
+    return value
 
 
 def _signed_int_env(name: str, default: int) -> int:
@@ -114,8 +140,10 @@ def _signed_int_env(name: str, default: int) -> int:
     try:
         value = int(raw)
     except ValueError:
-        return default
-    return value if value >= -1 else default
+        return _reject(name, raw, default, "not a whole number")
+    if value < -1:
+        return _reject(name, raw, default, "must be -1 (dynamic), 0 (off) or a ceiling")
+    return value
 
 
 # --------------------------------------------------------------------------- #
@@ -161,10 +189,6 @@ class Settings:
     analyst_model: str = DEFAULT_ANALYST_MODEL
     #: per-run ceiling on Gemini calls (the circuit breaker)
     max_llm_calls: int = DEFAULT_MAX_LLM_CALLS
-    #: public-endpoint guardrails, per instance -- see ``agent/limits.py``
-    asks_per_hour: int = DEFAULT_ASKS_PER_HOUR
-    asks_per_day: int = DEFAULT_ASKS_PER_DAY
-    concurrent_asks: int = DEFAULT_CONCURRENT_ASKS
     #: Gemini thinking budget in tokens: 0 off, -1 dynamic, >0 a ceiling.
     #: See DEFAULT_THINKING_BUDGET -- this is the main wall-clock lever.
     thinking_budget: int = DEFAULT_THINKING_BUDGET
@@ -207,24 +231,25 @@ def settings() -> Settings:
     ``os.environ``, from anywhere in ``agent/``."""
     load_env()
     mode = os.environ.get("TURNAROUND_MCP_MODE", "oss").strip().lower()
+    # `real()` erases a value that is still `.env.example` text, so the
+    # emptiness checks on `Settings` -- and the `NotConfigured` they raise --
+    # fire on a copied-but-unedited `.env` instead of letting the run proceed
+    # to an SSL handshake against the URL-encoded placeholder. See bridge/startup.
     return Settings(
-        grafana_url=os.environ.get("GRAFANA_URL", "").rstrip("/"),
-        grafana_token=os.environ.get("GRAFANA_SERVICE_ACCOUNT_TOKEN", ""),
-        gcp_project=os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
-        gcp_location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"),
+        grafana_url=real(os.environ.get("GRAFANA_URL")).rstrip("/"),
+        grafana_token=real(os.environ.get("GRAFANA_SERVICE_ACCOUNT_TOKEN")),
+        gcp_project=real(os.environ.get("GOOGLE_CLOUD_PROJECT")),
+        gcp_location=real(os.environ.get("GOOGLE_CLOUD_LOCATION")) or "us-central1",
         mcp_grafana_bin=_find_mcp_grafana(),
         mcp_mode="hosted" if mode == "hosted" else "oss",
-        grafana_cloud_mcp_token=os.environ.get("GRAFANA_CLOUD_MCP_TOKEN", "")
+        grafana_cloud_mcp_token=real(os.environ.get("GRAFANA_CLOUD_MCP_TOKEN"))
         or _read_token_file(),
-        ds_prom=os.environ.get("GRAFANA_DS_PROM_UID", "grafanacloud-prom"),
-        ds_loki=os.environ.get("GRAFANA_DS_LOKI_UID", "grafanacloud-logs"),
-        ds_tempo=os.environ.get("GRAFANA_DS_TEMPO_UID", "grafanacloud-traces"),
-        analyst_model=os.environ.get("TURNAROUND_GEMINI_MODEL", "").strip()
+        ds_prom=real(os.environ.get("GRAFANA_DS_PROM_UID")) or "grafanacloud-prom",
+        ds_loki=real(os.environ.get("GRAFANA_DS_LOKI_UID")) or "grafanacloud-logs",
+        ds_tempo=real(os.environ.get("GRAFANA_DS_TEMPO_UID")) or "grafanacloud-traces",
+        analyst_model=real(os.environ.get("TURNAROUND_GEMINI_MODEL"))
         or DEFAULT_ANALYST_MODEL,
         max_llm_calls=_int_env("TURNAROUND_MAX_LLM_CALLS", DEFAULT_MAX_LLM_CALLS),
-        asks_per_hour=_int_env("TURNAROUND_ASKS_PER_HOUR", DEFAULT_ASKS_PER_HOUR),
-        asks_per_day=_int_env("TURNAROUND_ASKS_PER_DAY", DEFAULT_ASKS_PER_DAY),
-        concurrent_asks=_int_env("TURNAROUND_CONCURRENT_ASKS", DEFAULT_CONCURRENT_ASKS),
         thinking_budget=_signed_int_env("TURNAROUND_THINKING_BUDGET",
                                         DEFAULT_THINKING_BUDGET),
     )

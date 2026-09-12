@@ -47,8 +47,8 @@ way, so if A works, B is just swapping the data in.
    `google-genai` picks ADC up automatically; leave `GOOGLE_APPLICATION_CREDENTIALS`
    unset in `.env`.
 
-   *Alternative — a service-account key* (needed if ADC isn't available where you
-   run, and what `deploy/` avoids by using the Cloud Run SA):
+   *Alternative — a service-account key* (needed if ADC isn't available where
+   you run; a managed runtime with its own service account avoids it):
    ```bash
    gcloud iam service-accounts create turnaround-local --display-name "Turnaround local"
    gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
@@ -61,14 +61,14 @@ way, so if A works, B is just swapping the data in.
    then set `GOOGLE_APPLICATION_CREDENTIALS=.secrets/gcp-sa.json` in `.env`
    (`.secrets/` is git-ignored).
 
-Model note: everything runs on `gemini-2.5-flash`. Do **not** set
-`TURNAROUND_GEMINI_MODEL_PRO` unless you have `gemini-2.5-pro` quota — it 429s on
-a fresh project.
+Model note: everything runs on `gemini-2.5-flash`, and `TURNAROUND_GEMINI_MODEL`
+is the one variable that changes it. Point it at `gemini-2.5-pro` only if you
+have pro quota — a fresh project 429s on the first analyst call.
 
 Speed note: `TURNAROUND_THINKING_BUDGET` defaults to `0` — Gemini 2.5 thinking
 off. Measured end to end against a live stack, same question, only this changed:
-**dynamic thinking 75.4s / 60.7s, off 24.5s / 18.5s**, with all six scorecard
-checks passing either way. The analysts run finished PromQL recipes and report
+**dynamic thinking 75.4s / 60.7s, off 24.5s / 18.5s**, with every scorecard
+check passing either way. The analysts run finished PromQL recipes and report
 the numbers, so there is nothing for thinking to do. Set it to `-1` to hand the
 decision back to Gemini.
 
@@ -100,8 +100,8 @@ account**. Role **Editor** is enough: the account creates a folder, dashboards,
 alert rules and ML jobs, reads Mimir/Loki/Tempo through MCP, and writes
 annotations — and an Editor can do all of that. Do **not** give it Admin. Admin
 adds the ability to read users, service accounts, API keys and datasource
-secrets, none of which this project touches, and this one token is mounted into
-a publicly reachable Cloud Run service.
+secrets, none of which this project touches. If you later put this behind
+anything publicly reachable, that token goes with it.
 
 Then **Add service account token** → copy the `glsa_…` value.
 
@@ -145,7 +145,7 @@ git clone https://github.com/Y-WenBin/AgenticCinema-Grafana-Turnaround.git turna
 cd turnaround
 uv python install 3.12
 uv sync --group dev
-uv run pytest -q            # 446 pass, no credentials needed — proves the checkout
+uv run pytest -q            # all green, no credentials needed — proves the checkout
 uv run ruff check .
 
 # mcp-grafana (the agent's tool server). Any one of:
@@ -156,6 +156,28 @@ go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@v1.3.0
 
 Turnaround auto-finds `mcp-grafana` on `PATH` or in `/opt/homebrew/bin`,
 `/usr/local/bin`, `~/go/bin`; otherwise set `TURNAROUND_MCP_GRAFANA_BIN`.
+
+**Check it works before you have any accounts.** This runs the whole simulated
+show through the real write path against in-memory exporters — no Grafana, no
+Vertex, no network:
+
+```bash
+uv run python -m seed.populate --dry-run   # prints the show, ends "nothing left this machine"
+```
+
+**Installing instead of cloning?** `uv tool install turnaround` (or `pip install`)
+gives you the same four steps as commands, which read `.env` from the directory
+you run them in:
+
+| Command | Same as |
+|---|---|
+| `turnaround-seed` | `python -m seed.populate` |
+| `turnaround-refresh` | `python -m seed.refresh` |
+| `turnaround-provision` | `python -m grafana.provision` |
+| `turnaround-ask` | `python -m agent.run` |
+
+The rest of this guide uses the `python -m` form, since it works from a checkout
+either way.
 
 ---
 
@@ -187,18 +209,33 @@ GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
 GOOGLE_CLOUD_LOCATION=us-central1
 # GOOGLE_APPLICATION_CREDENTIALS=.secrets/gcp-sa.json   # only if not using ADC
 
-# Privacy — any strong random string, keep it out of git
-TURNAROUND_PSEUDONYM_SALT=$(openssl rand -hex 16)
+# Privacy — generated below, not typed. Keep it out of git.
+TURNAROUND_PSEUDONYM_SALT=
 
 # Optional: real tool conventions (part 6)
 # TURNAROUND_SHOT_ID_SCHEME=seq_sh
 # TURNAROUND_FARM_CONVENTION=opencue
 ```
 
-Every entry point loads `.env` itself — `agent.run`, `agent.serve`,
-`seed.populate`, `seed.refresh` and `grafana.provision`. A variable already
-exported in your shell always wins, so CI and Cloud Run (which set the
-environment directly and ship no `.env`) are unaffected.
+Then generate the salt, rather than typing one:
+
+```bash
+echo "TURNAROUND_PSEUDONYM_SALT=$(openssl rand -hex 16)" >> .env
+```
+
+Run that in a shell, not inside `.env`. `.env` is read literally — `load_env`
+does no interpolation, by design — so `TURNAROUND_PSEUDONYM_SALT=$(openssl rand
+-hex 16)` written *in the file* is a salt whose value is the twenty-three
+characters `$(openssl rand -hex 16)`. Every deployment that copied it would
+share one publicly documented salt, and shared salts make the artist pseudonyms
+reversible by anyone holding a crew list, which is the whole thing they exist to
+prevent. The entry points now refuse to start on that string, and on `change-me`
+— but the fix is to generate a real one.
+
+Every entry point loads `.env` itself — `agent.run`, `seed.populate`,
+`seed.refresh` and `grafana.provision`. A variable already exported in your
+shell always wins, so CI and any managed runtime (which set the environment
+directly and ship no `.env`) are unaffected.
 
 ---
 
@@ -388,36 +425,26 @@ work unchanged** — that's the point of the relabel.
 
 ---
 
-## 7. (Optional) deploy the agent to Cloud Run
+## 7. (Optional) serving it over HTTP
 
-Needs `gcloud` installed and authenticated.
+Nothing in this repository serves HTTP. The pipeline is a library and four
+commands; `python -m agent.run "<question>"` is the whole interface, and
+`agent.engine.answer_question` is the one function a service would call.
 
-```bash
-./deploy/deploy.sh          # project from GOOGLE_CLOUD_PROJECT in .env
-```
+The hosted demo — a FastAPI service, a browser playground, per-visitor rate
+limiting and a Cloud Run deployment — lives in a separate web-application
+repository. It is a proof-of-concept for one deployment rather than something to
+reuse, which is why it is not here: this package should not declare a web
+framework to run four commands that never serve anything.
 
-It enables APIs, makes a least-privilege runtime service account
-(`roles/aiplatform.user`), pushes the Grafana + OTLP secrets to Secret Manager,
-builds `./Dockerfile` once, and deploys two things from that one image: the
-agent service, and a **re-seed job** on a 15-minute Cloud Scheduler trigger so
-the compressed window never ages out from under the hosted demo. Then:
+If you are building your own service on top of this, two things from that work
+are worth copying rather than rediscovering:
 
-```bash
-URL=$(gcloud run services describe turnaround-agent --region us-central1 --format 'value(status.url)')
-curl -s "$URL/health" | python3 -m json.tool
-curl -s -H 'content-type: application/json' \
-  -d '{"question":"why is SEQ0420 slipping and what is it costing?"}' "$URL/ask" | python3 -m json.tool
-```
-
-Use `/health`, not `/healthz`: Google Frontend intercepts the exact path
-`/healthz` on `*.run.app` and returns its own HTML 404 without ever reaching the
-container. Same handler, different path.
-
-The service is public so a reviewer can open it. It cannot write anything:
-`serve.py` runs `AutoApprover(approve=False)`, `--max-instances` caps the blast
-radius and `TURNAROUND_MAX_LLM_CALLS` caps the spend of any one request.
-
-Full detail: [`deploy/README.md`](../deploy/README.md).
+- **Gate the writes.** `AutoApprover(approve=False)` is the right default for
+  anything reachable without a human attached; see
+  [`agent/approval.py`](../agent/approval.py).
+- **Cap the spend before you expose it.** `TURNAROUND_MAX_LLM_CALLS` bounds one
+  run. It does not bound how many runs a stranger can start.
 
 ---
 
@@ -430,7 +457,7 @@ Full detail: [`deploy/README.md`](../deploy/README.md).
 | Mimir rejects samples ("out of order" / "too old") | Use plain `seed.populate` (it compresses to a 45-min window). Don't pass `--compress 0` against hosted Grafana Cloud |
 | Dashboards empty a few minutes after seeding | Run `seed.refresh`, or widen a panel's range to `now-2h` (queries use `last_over_time(…[2h:])`) |
 | Vertex `403 PERMISSION_DENIED` | `gcloud auth application-default login` not done, `aiplatform.googleapis.com` not enabled, or wrong `GOOGLE_CLOUD_PROJECT` |
-| Vertex `429 RESOURCE_EXHAUSTED` | You set `TURNAROUND_GEMINI_MODEL_PRO`; unset it — flash is the default and has quota |
+| Vertex `429 RESOURCE_EXHAUSTED` | You pointed `TURNAROUND_GEMINI_MODEL` at a model you have no quota for; unset it — `gemini-2.5-flash` is the default and a fresh project has quota for it |
 | `mcp-grafana: command not found` | Install it (part 3) or set `TURNAROUND_MCP_GRAFANA_BIN=/full/path/mcp-grafana` |
 | Agent: `circuit breaker tripped` | A run hit `TURNAROUND_MAX_LLM_CALLS` (default 40). Raise it for a genuinely long run; otherwise it caught a tool-retry loop |
 | `HostedMcpNotAuthorized` | You set `TURNAROUND_MCP_MODE=hosted` — run `uv run python -m agent.mcp_login` for the OAuth flow, or unset it to use the default OSS mode |

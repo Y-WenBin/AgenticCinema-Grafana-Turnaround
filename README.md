@@ -107,53 +107,37 @@ Analysts are read-only *by construction*, not by prompt — they are wired to an
 | [`agent/`](agent/) — the deterministic multi-agent pipeline, `mcp-grafana` in two modes (OSS / hosted OAuth), the gated write-back | complete |
 | [`observability/`](observability/) — the agent instruments itself with the OTel GenAI conventions | complete |
 | [`agent/evaluation.py`](agent/evaluation.py) — a deterministic judge + an LLM judge, emitted as `gen_ai.evaluation.result` | complete |
-| [`deploy/`](deploy/) — Cloud Run image + one-shot deploy script | **deployed** — [https://turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app), public and read-only, re-seeded every 15 min by a Cloud Run job |
 
 ## Try it
 
-**[turnaround-agent-b465d3vxhq-uc.a.run.app](https://turnaround-agent-b465d3vxhq-uc.a.run.app)** —
-a playground with the four questions verified against the live stack. Ask one and
-you get the answer, the judge scorecard, and the full tool timeline showing the
-PromQL, LogQL and TraceQL the agents actually wrote. A run usually takes 25–45 seconds
-because it is really running.
+The fastest look at what this does needs no accounts and nothing configured —
+see [Running it](#running-it) below for the one-command simulated show.
 
-No auth, nothing to install. Same thing from a terminal:
-
-```bash
-curl -s -H 'content-type: application/json' \
-  -d '{"question":"why is SEQ0420 slipping and what is it costing?"}' \
-  https://turnaround-agent-b465d3vxhq-uc.a.run.app/ask
-```
-
-It is public and cannot write: `serve.py` runs `AutoApprover(approve=False)` and
-the analysts are wired to `mcp-grafana --disable-write`. A Cloud Run job re-seeds
-the stack every 15 minutes, so the answers are against live data whenever you ask.
-
-Public and *unbounded* would be a different thing — every question spends real
-Gemini calls on a real bill — so the endpoint is capped three ways
-([`agent/limits.py`](agent/limits.py)): per visitor, a global daily budget, and
-concurrency. `GET /api/capacity` says what is left. The counters are per
-instance, which the module is explicit about rather than implying they are
-global.
-
-The page also shows the *other* side: `GET /api/backend`
-([`agent/backend.py`](agent/backend.py)) renders the live Grafana Cloud signal
-the agents read, next to the PromQL and LogQL that produced each number. It is a
-fixed board, not a query API — the browser sends no parameters, so there is
-nothing for a visitor to steer — and the crew figure carries the aggregation
-floor in its own PromQL rather than in a promise. One upstream query serves
-every viewer, which is why this exists instead of a natively shared dashboard:
-a public Grafana board runs every panel for every anonymous visitor against the
-owner's quota, so sharing the link becomes a way to spend someone
-else's bill.
+There is also a hosted playground: a public, read-only demo that runs the real
+pipeline against a live Grafana Cloud stack and shows the answer, the judge
+scorecard, and the PromQL, LogQL and TraceQL the agents actually wrote. **Its
+code is not in this repository.** The web application, its rate limiting and its
+Cloud Run deployment live in a separate repository, because they are a
+proof-of-concept for one deployment rather than something you would reuse. This
+repository is the part you plug into your own pipeline.
 
 ## Running it
 
 ```bash
 uv sync --group dev
-uv run pytest            # 446 tests, offline: no network, no credentials
+uv run pytest            # the full suite, offline: no network, no credentials
 uv run ruff check .
 ```
+
+See the whole simulated show run, with no accounts and nothing to configure:
+
+```bash
+uv run python -m seed.populate --dry-run
+```
+
+That drives the full write path against in-memory exporters — 200 shots, ~1,450
+spans, ~5,900 metric points — and prints what *would* have been sent. It takes a
+second and nothing leaves the machine. If it prints numbers, your checkout works.
 
 Ask the agent a question (needs a filled-in `.env` — copy `.env.example`; [`docs/SETUP.md`](docs/SETUP.md) walks through Grafana Cloud and Vertex):
 
@@ -162,6 +146,10 @@ uv run python -m seed.populate
 uv run python -m grafana.provision
 uv run python -m agent.run "Why is SEQ0420 slipping, and what is it costing in artist-days?"
 ```
+
+Installed rather than cloned, each of those is a command — `turnaround-seed`,
+`turnaround-provision`, `turnaround-ask`, plus `turnaround-refresh`. They read
+`.env` from the directory you run them in.
 
 > **Re-seed before any live run.** The show's history is compressed into a
 > ~45-minute window ending at the moment of seeding, and every query reads it
