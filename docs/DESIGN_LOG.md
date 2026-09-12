@@ -648,4 +648,30 @@ placeholder salt, which beats any file outright.
 point exists. It has three now. Its docstring also still pointed at `deploy/`,
 which left in the split; so did a docstring in `tests/test_config.py`.
 
-516 tests.
+**A test that failed about one run in ten, and the bug underneath it.**
+`test_plugin_builds_a_nested_trace_from_adk_callbacks` failed on a fresh clone,
+passed in isolation, and passed twenty times in a row afterwards. That shape --
+intermittent, order-independent, unreproducible on demand -- is what a dangling
+`id()` looks like from the outside.
+
+`observability/adk.py` keyed open `execute_tool` spans on `id(tool_context)`
+while deliberately holding no reference to the context. The object is freed the
+moment `before_tool_callback` returns, and the lookup in `after_tool_callback`
+worked only because CPython usually hands the next object the address it just
+freed. Measured: the address is reused 1000/1000 times when nothing else is
+allocated in between, and never when three objects are. So every test of this
+path had been passing for a reason unrelated to the code being correct.
+
+The consequence in production is worse than a flaky test: a missed lookup means
+the span is never closed, so it never reaches the exporter and never appears in
+Tempo. The evidence chain the whole product is built on would have had holes in
+it, silently, under memory pressure. And a freed address can be reissued to an
+unrelated object, which turns the miss into a hit that closes the wrong span.
+
+Now keyed on ADK's `function_call_id` -- already read three lines above the
+store, and an identity the plugin is actually entitled to keep. The two new
+tests hold the first context alive, so the address cannot be recycled and the
+old keying fails deterministically rather than one run in ten. 25 consecutive
+full runs, clean.
+
+518 tests.

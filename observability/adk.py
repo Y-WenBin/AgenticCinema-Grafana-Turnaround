@@ -10,7 +10,9 @@ Two facts about ADK 2.8 shape this:
   identity. But Turnaround's pipeline is a ``SequentialAgent`` and ADK does not
   run a turn's tool calls concurrently, so model and tool calls form one
   strictly sequential stream -- a stack pairs the model calls with no keys. Tool
-  calls do get one shared ``ToolContext``, so those pair on its identity.
+  calls carry ADK's own ``function_call_id``, so those pair on that. They used
+  to pair on the ToolContext's *address*, which is not an identity the plugin
+  gets to keep -- see ``_tools``.
 * Doing ``opentelemetry.context.attach``/``detach`` across two callbacks fails
   (they run in different async contexts). So the ``invoke_agent`` root span is
   opened by ``agent/engine.py`` around the whole run instead, and the ``chat`` and
@@ -67,10 +69,27 @@ class GenAiObservabilityPlugin(BasePlugin):
         #: by the judge tier so a low eval score in Loki pivots to this trace
         self.run_id: str = new_response_id()
         self._chat_stack: list[tuple[Any, float, str | None, str | None]] = []
-        #: open execute_tool spans, keyed on the ToolContext ADK hands to both
-        #: the before and after hooks for one call (unlike the model hooks,
-        #: which get different context objects -- hence the stack above)
-        self._tools: dict[int, tuple[Any, Any]] = {}
+        #: open execute_tool spans, keyed on ADK's own ``function_call_id``.
+        #:
+        #: This used to key on the *address* of the ToolContext, for an object
+        #: the plugin deliberately does not hold a reference to. The context is
+        #: freed the moment ``before_tool_callback`` returns, and the lookup
+        #: worked only because CPython usually hands the next ToolContext the
+        #: address it just freed. Allocate anything in between and the key
+        #: differs, the lookup misses, and the ``execute_tool`` span is never
+        #: closed -- so it never reaches the exporter and never appears in
+        #: Tempo. From the outside that looked like a test failing about one run
+        #: in ten. Worse, a freed address can be reused by an unrelated object,
+        #: and then the miss becomes a hit that closes the wrong span.
+        #:
+        #: ``function_call_id`` is ADK's own identifier for one tool call, it is
+        #: already read a few lines below, and it stays valid however the
+        #: context objects happen to be allocated.
+        self._tools: dict[str, tuple[Any, Any]] = {}
+        #: Calls arriving with no ``function_call_id`` at all. Paired LIFO, for
+        #: the same reason the model hooks are (see ``_chat_stack``): within one
+        #: agent the callback stream is strictly nested.
+        self._anonymous_tools: list[tuple[Any, Any]] = []
 
     @property
     def last_response_id(self) -> str:
@@ -118,11 +137,22 @@ class GenAiObservabilityPlugin(BasePlugin):
         call_id = getattr(tool_context, "function_call_id", None)
         query, lang = _extract_query(tool_args or {})
         cm = self._t.execute_tool(tool_name=name, call_id=call_id, query=query, query_lang=lang)
-        self._tools[id(tool_context)] = (cm, cm.__enter__())
+        entry = (cm, cm.__enter__())
+        if call_id is None:
+            self._anonymous_tools.append(entry)
+        else:
+            self._tools[call_id] = entry
+
+    def _close_tool(self, tool_context: Any) -> tuple[Any, Any] | None:
+        """The open span for this call, taken from whichever side holds it."""
+        call_id = getattr(tool_context, "function_call_id", None)
+        if call_id is not None:
+            return self._tools.pop(call_id, None)
+        return self._anonymous_tools.pop() if self._anonymous_tools else None
 
     async def after_tool_callback(self, *, tool: Any, tool_args: dict[str, Any],
                                   tool_context: Any, result: Any) -> None:
-        entry = self._tools.pop(id(tool_context), None)
+        entry = self._close_tool(tool_context)
         if entry is None:
             return
         cm, span = entry
@@ -132,7 +162,7 @@ class GenAiObservabilityPlugin(BasePlugin):
 
     async def on_tool_error_callback(self, *, tool: Any, tool_args: dict[str, Any],
                                      tool_context: Any, error: Exception) -> None:
-        entry = self._tools.pop(id(tool_context), None)
+        entry = self._close_tool(tool_context)
         if entry is None:
             return
         cm, span = entry

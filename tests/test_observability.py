@@ -215,3 +215,73 @@ def test_plugin_pairs_many_sequential_model_calls():
     counts = {p.attributes["gen_ai.token.type"]: p.count
               for p in h.metric_points("gen_ai.client.token.usage")}
     assert counts == {"input": 6, "output": 6}
+
+
+def test_tool_spans_pair_on_the_call_id_not_on_a_recycled_address():
+    """A tool span must close even when the two ToolContexts are really distinct.
+
+    The plugin used to key open tool spans on ``id(tool_context)`` while holding
+    no reference to the object, so the context was freed as soon as
+    ``before_tool_callback`` returned. The lookup in ``after_tool_callback``
+    worked only because CPython usually reissues the address it just freed --
+    which made every existing test of this path pass for a reason that has
+    nothing to do with the code being correct, and made one of them fail about
+    one run in ten, whenever an allocation landed in between.
+
+    The `keep_alive` list below is that allocation, made deliberate: it holds the
+    first context so its address cannot be recycled, which is exactly the
+    situation a real ADK run reaches by accident under memory pressure. On the
+    old keying the `execute_tool` span is never closed, never exported, and never
+    reaches Tempo -- a silently missing span rather than a loud failure.
+    """
+    h = make_harness()
+    p = GenAiObservabilityPlugin(h.telemetry)
+    tool = SimpleNamespace(name="query_prometheus")
+    keep_alive = []
+
+    async def scenario():
+        with h.telemetry.invoke_agent("producer"):
+            before = SimpleNamespace(function_call_id="fc-9")
+            keep_alive.append(before)
+            await p.before_tool_callback(tool=tool, tool_args={"expr": "up"},
+                                         tool_context=before)
+            await p.after_tool_callback(tool=tool, tool_args={"expr": "up"},
+                                        tool_context=SimpleNamespace(function_call_id="fc-9"),
+                                        result={"ok": True})
+
+    _run(scenario())
+    assert "execute_tool query_prometheus" in h.span_names()
+
+
+def test_interleaved_tool_calls_close_their_own_spans():
+    """Two calls open at once pair by id, not by arrival order.
+
+    A stack would close the wrong one here, and an address key would need two
+    coincidences instead of one. ``function_call_id`` is the only thing in the
+    callback stream that actually identifies a call.
+    """
+    h = make_harness()
+    p = GenAiObservabilityPlugin(h.telemetry)
+    first = SimpleNamespace(name="query_prometheus")
+    second = SimpleNamespace(name="query_loki")
+
+    async def scenario():
+        with h.telemetry.invoke_agent("producer"):
+            await p.before_tool_callback(tool=first, tool_args={"expr": "up"},
+                                         tool_context=SimpleNamespace(function_call_id="a"))
+            await p.before_tool_callback(tool=second, tool_args={"query": "{job=\"x\"}"},
+                                         tool_context=SimpleNamespace(function_call_id="b"))
+            # closed in the order they opened, which is what a stack gets wrong
+            await p.after_tool_callback(tool=first, tool_args={}, result={"ok": True},
+                                        tool_context=SimpleNamespace(function_call_id="a"))
+            await p.after_tool_callback(tool=second, tool_args={}, result={"ok": True},
+                                        tool_context=SimpleNamespace(function_call_id="b"))
+
+    _run(scenario())
+    names = h.span_names()
+    assert "execute_tool query_prometheus" in names
+    assert "execute_tool query_loki" in names
+    prom = h.spans_by_name("execute_tool query_prometheus")[0]
+    loki = h.spans_by_name("execute_tool query_loki")[0]
+    assert prom.attributes["turnaround.query"] == "up"
+    assert loki.attributes["turnaround.query"] == '{job="x"}'
