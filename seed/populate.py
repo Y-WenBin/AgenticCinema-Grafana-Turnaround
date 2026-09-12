@@ -21,6 +21,7 @@ from bridge.dotenv import load_env
 from bridge.emit import Emitter
 from bridge.metrics import MetricBackfill, Point
 from bridge.ontology import Attr, Department, Metric, TaskStatus
+from bridge.privacy import SALT_COMMAND, SALT_ENV, install_ephemeral_salt
 from bridge.startup import reporting
 from seed.model import ProductionHistory, ShowSimulation
 
@@ -260,6 +261,16 @@ def _populate() -> None:
         ),
     )
     args = parser.parse_args()
+
+    # A dry run exports nothing, so it needs no configured salt -- see
+    # `install_ephemeral_salt`. Announced rather than silent: a dry run that
+    # passed on a borrowed salt must not read as proof that `.env` is filled in.
+    if args.dry_run and install_ephemeral_salt():
+        print(
+            f"no {SALT_ENV} configured; using a throwaway one for this dry run.\n"
+            "  a real run needs a persistent salt:\n"
+            f"    {SALT_COMMAND}"
+        )
 
     print("simulating the show...")
     sim = ShowSimulation.load()

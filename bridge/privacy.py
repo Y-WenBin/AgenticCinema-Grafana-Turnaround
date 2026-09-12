@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import os
 import re
+import secrets
 from collections.abc import Iterable, Mapping
 
 from bridge.startup import ConfigError, is_placeholder
@@ -28,7 +29,9 @@ from bridge.startup import ConfigError, is_placeholder
 #: Below this, an "overloaded pool" alert is really an alert about one person.
 MIN_POOL_SIZE = 3
 
-_SALT_ENV = "TURNAROUND_PSEUDONYM_SALT"
+#: Public because the seeder names it when it substitutes a throwaway salt,
+#: and one spelling of an environment variable is the whole point of a constant.
+SALT_ENV = "TURNAROUND_PSEUDONYM_SALT"
 
 #: The one command that produces a working salt, defined once and quoted
 #: wherever it is offered -- the error below and ``docs/SETUP.md``.
@@ -41,7 +44,7 @@ _SALT_ENV = "TURNAROUND_PSEUDONYM_SALT"
 #: catches that by reading; ``tests/test_startup.py`` catches it by running the
 #: command against a copy of ``.env.example`` and checking a pseudonym comes
 #: out the other side.
-SALT_COMMAND = f'echo "{_SALT_ENV}=$(openssl rand -hex 16)" >> .env'
+SALT_COMMAND = f'echo "{SALT_ENV}=$(openssl rand -hex 16)" >> .env'
 _PSEUDONYM_LENGTH = 8
 
 
@@ -62,16 +65,48 @@ class MissingSalt(PrivacyViolation, ConfigError):
 
 
 def _salt() -> bytes:
-    salt = (os.environ.get(_SALT_ENV) or "").strip()
+    salt = (os.environ.get(SALT_ENV) or "").strip()
     if not salt or is_placeholder(salt):
         raise MissingSalt(
-            f"{_SALT_ENV} is unset or still the placeholder. Refusing to emit "
+            f"{SALT_ENV} is unset or still the placeholder. Refusing to emit "
             "artist telemetry with a guessable pseudonym salt: without a real "
             "salt the pseudonyms are reversible by anyone who can list the crew.\n"
             "  generate one and append it to .env:\n"
             f"    {SALT_COMMAND}"
         )
     return salt.encode()
+
+
+def install_ephemeral_salt() -> bool:
+    """Give this process a throwaway salt if none is configured. Returns whether it did.
+
+    For a run that exports nothing. The salt gate exists because a *guessable*
+    salt makes pseudonyms reversible by anyone holding a crew list -- and that
+    only matters once the pseudonyms leave the machine. ``--dry-run`` writes to
+    in-memory exporters and prints "nothing left this machine", so there is
+    nobody to be reversible to.
+
+    Requiring a configured salt there bought no privacy and cost the project its
+    onboarding: the README offers the dry run twice as the thing that "needs no
+    accounts and nothing configured", and it exited 2 on the first command a new
+    user ran. CI never caught it because the wheel job writes a salt of its own
+    before running the same command -- it tested the workaround, not the promise.
+
+    A random 16-byte salt is *stronger* here than a configured one, not weaker:
+    it is unguessable and it does not outlive the process. The one thing it must
+    never be is silent, or someone will read a passing dry run as proof their
+    real ``.env`` is filled in -- so the caller announces it.
+
+    Never call this on an exporting path. A real run has to keep failing closed,
+    because its pseudonyms have to stay stable across seeds to be joinable at
+    all, and a per-process salt would quietly break that as well as the audit
+    trail.
+    """
+    configured = (os.environ.get(SALT_ENV) or "").strip()
+    if configured and not is_placeholder(configured):
+        return False
+    os.environ[SALT_ENV] = secrets.token_hex(16)
+    return True
 
 
 def pseudonymize(artist_id: str) -> str:

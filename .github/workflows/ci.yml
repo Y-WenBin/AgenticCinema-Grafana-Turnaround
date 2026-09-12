@@ -45,7 +45,12 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10
+        # Pinned to an exact release, not `@v10`: astral-sh/setup-uv stopped
+        # publishing moving major tags after v7, so `@v10` resolved to nothing
+        # and every job died at "Set up job" before a single test ran. This
+        # workflow was red from the day it was added and had never once
+        # executed the suite it exists to guard.
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -68,7 +73,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock

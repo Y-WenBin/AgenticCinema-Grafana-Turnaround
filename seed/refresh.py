@@ -17,8 +17,7 @@ rather than `increase()` over hours.
     uv run python -m seed.refresh                 # every 15 minutes, forever
     uv run python -m seed.refresh --interval 10 --once
 
-In production this is a Cloud Run job on a schedule, not a process babysat by
-a laptop (see deploy/).
+In production this is a scheduled job, not a process babysat by a laptop.
 """
 
 from __future__ import annotations
@@ -33,6 +32,15 @@ from bridge.dotenv import load_env
 
 
 def _seed() -> bool:
+    """One full re-seed. Prints a line; on failure that line says why.
+
+    The failure branch reads `stderr`, not `stdout`. It used to take the last
+    line of stdout whenever there was one, falling back to stderr only if stdout
+    was empty -- and `seed.populate` prints "simulating the show..." before
+    anything can go wrong, so stdout was never empty and stderr was never shown.
+    Every failure reported itself as `FAILED: simulating the show...`, which
+    names the one thing that did work.
+    """
     started = datetime.now(UTC)
     proc = subprocess.run(
         [sys.executable, "-m", "seed.populate"],
@@ -40,10 +48,17 @@ def _seed() -> bool:
         text=True,
         check=False,
     )
-    tail = proc.stdout.strip().splitlines()[-1:] or [proc.stderr.strip()[-200:]]
     stamp = started.strftime("%H:%M:%SZ")
-    print(f"[{stamp}] {'ok' if proc.returncode == 0 else 'FAILED'}: {tail[0]}", flush=True)
-    return proc.returncode == 0
+    if proc.returncode == 0:
+        tail = proc.stdout.strip().splitlines()[-1:] or [""]
+        print(f"[{stamp}] ok: {tail[0]}", flush=True)
+        return True
+    # The seeder's own configuration errors are a sentence on stderr
+    # (`bridge.startup.reporting`). Pass it through whole rather than clipping
+    # it: the sentence ends in the command that fixes the problem.
+    detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+    print(f"[{stamp}] FAILED:\n{detail}", file=sys.stderr, flush=True)
+    return False
 
 
 def main() -> None:
@@ -55,11 +70,20 @@ def main() -> None:
     ap.add_argument("--once", action="store_true", help="seed once and exit")
     args = ap.parse_args()
 
-    ok = _seed()
+    # The first seed decides whether looping is worth anything. Every failure
+    # this command actually hits is a standing one -- an unset salt, a token
+    # that was never filled in -- so retrying it on a timer just produces the
+    # same error every fifteen minutes forever. It used to do exactly that, and
+    # because the reason was swallowed (see `_seed`) it looked like a hang.
+    if not _seed():
+        sys.exit(1)
     if args.once:
-        sys.exit(0 if ok else 1)
+        sys.exit(0)
     while True:
         time.sleep(args.interval * 60)
+        # Past the first success the config is known good, so a failure here is
+        # transient -- a flaky network, a stack briefly refusing writes. Those
+        # are worth retrying on the next tick.
         _seed()
 
 
