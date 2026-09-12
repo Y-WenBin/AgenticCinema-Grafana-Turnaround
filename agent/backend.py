@@ -153,7 +153,7 @@ BOARD: tuple[Tile, ...] = (
     Tile(
         key="judge_pass_rate",
         title="Judge pass rate",
-        caption="Across all six dimensions, deterministic and LLM alike.",
+        caption="Every dimension on the card, deterministic and LLM alike.",
         source="loki",
         query=(
             f'sum(count_over_time({EVAL_STREAM} | json | label="pass" [{WINDOW}]))'

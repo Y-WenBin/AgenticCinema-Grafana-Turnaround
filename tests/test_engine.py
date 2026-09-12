@@ -150,12 +150,13 @@ def test_the_deterministic_judge_runs_without_an_llm_or_telemetry(offline):
 
     assert outcome.scorecard is not None
     names = {r.name for r in outcome.scorecard.results}
-    assert names == {"grounding_numbers", "mechanism_named", "privacy_floor_respected"}
+    assert names == {"grounding_numbers", "mechanism_named",
+                     "privacy_floor_respected", "figures_are_readable"}
     assert not outcome.scorecard.failed
 
 
 def test_an_empty_answer_is_not_scored(offline):
-    """Scoring nothing would emit three misleading 'fail' events per run."""
+    """Scoring nothing would emit a full card of misleading 'fail' events per run."""
     offline.setattr(engine, "Runner", _runner_yielding("   "))
     outcome = asyncio.run(engine.answer_question(
         "q", approver=AutoApprover(approve=False), conversation_id="t",
@@ -211,12 +212,11 @@ def test_optional_tiers_degrade_to_none_rather_than_failing_a_run(monkeypatch, c
     """Telemetry and the LLM judge are both best-effort: an unreachable OTLP
     gateway or a missing Vertex credential must not lose the answer."""
     assert engine.instrumentation(enabled=False) is None
-    assert engine.judge_generator(False, "gemini-2.5-flash") is None
 
     import agent.evaluation as ev
     monkeypatch.setattr(ev, "vertex_generator",
                         lambda _m: (_ for _ in ()).throw(RuntimeError("no ADC")))
-    assert engine.judge_generator(True, "gemini-2.5-flash") is None
+    assert engine.judge_generator("gemini-2.5-flash") is None
     assert "LLM judge off" in capsys.readouterr().err
 
 
@@ -296,7 +296,8 @@ def test_ask_returns_the_documented_json_shape(offline):
     assert body["answer"].startswith("Answer: SEQ0420")
     assert body["circuit_breaker_tripped"] is False
     assert {e["name"] for e in body["evaluation"]} == {
-        "grounding_numbers", "mechanism_named", "privacy_floor_respected"}
+        "grounding_numbers", "mechanism_named", "privacy_floor_respected",
+        "figures_are_readable"}
     assert all({"name", "score", "label", "actor_type", "explanation"} == set(e)
                for e in body["evaluation"])
 

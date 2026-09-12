@@ -141,3 +141,21 @@ jobs:
 
       - name: The image can import its own entry point
         run: docker run --rm --entrypoint python turnaround:ci -c "import agent.serve; print('ok')"
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: The arm64 agent binary is the arm64 one
+        # Runners are amd64, so the step above never touches the other half of
+        # the TARGETARCH branch -- which is the half that was broken: the image
+        # used to carry an amd64 `mcp-grafana` whatever it was built for, and
+        # died at the first tool call with "exec format error".
+        #
+        # Only the `mcp` stage is built here. It is the only stage that varies
+        # by architecture, and it is seconds under emulation where a full
+        # `uv sync` would be minutes. The stage downloads the arm64 tarball,
+        # checks it against the arm64 SHA256, and runs the binary -- so a wrong
+        # checksum or a wrong slug fails right here rather than in a deploy.
+        run: |
+          docker buildx build --progress=plain --platform linux/arm64 \
+            --target mcp --output=type=cacheonly .

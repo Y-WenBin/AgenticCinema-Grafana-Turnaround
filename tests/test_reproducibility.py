@@ -422,6 +422,61 @@ def test_deploy_builds_the_dockerfile_not_a_buildpack():
     assert script.count("--image \"$IMAGE\"") == 2, "service and job share one image"
 
 
+class TestTheImageIsReproducibleAndRunsOnThisMachine:
+    """Two build-time failures that used to be invisible until runtime.
+
+    The tarball was hardcoded to ``Linux_x86_64``, so a ``docker build`` on
+    Apple Silicon produced an arm64 image carrying an amd64 binary -- the agent
+    tier came up and died on the first tool call with "exec format error". The
+    one step that would have caught it ended ``|| true`` and so could not fail.
+    """
+
+    @staticmethod
+    def _dockerfile() -> str:
+        return (REPO / "Dockerfile").read_text()
+
+    def test_the_binary_follows_the_target_architecture(self):
+        body = self._dockerfile()
+        assert "ARG TARGETARCH" in body
+        assert "Linux_${slug}" in body, "the tarball must follow TARGETARCH"
+        # ...and each architecture needs its own checksum, or the pin is a lie
+        assert "MCP_GRAFANA_SHA256_AMD64" in body
+        assert "MCP_GRAFANA_SHA256_ARM64" in body
+
+    def test_the_verification_step_is_allowed_to_fail(self):
+        """``|| true`` on the check that proves the binary runs made the whole
+        step decorative. Nothing in this file may end that way."""
+        for line in self._dockerfile().splitlines():
+            assert not line.rstrip().endswith("|| true"), line
+
+    def test_the_base_image_is_pinned_by_digest(self):
+        """``python:3.12-slim`` is rebuilt weekly. A floating tag means the
+        image is not reproducible and a base change arrives in a deploy nobody
+        made -- in a file that otherwise pins the agent binary to a SHA256."""
+        stages: set[str] = set()
+        external = 0
+        for line in self._dockerfile().splitlines():
+            if not line.startswith("FROM "):
+                continue
+            parts = line.split()
+            image = parts[1]
+            if image not in stages:  # a reference to an earlier stage needs no digest
+                external += 1
+                assert "@sha256:" in image, f"unpinned base: {line}"
+            if len(parts) >= 4 and parts[2] == "AS":
+                stages.add(parts[3])
+        assert external, "no external base image found -- has the file changed shape?"
+
+    def test_curl_does_not_reach_the_runtime_image(self):
+        """It is installed to fetch the binary; a separate stage keeps it out of
+        what ships."""
+        body = self._dockerfile()
+        assert "install -y --no-install-recommends curl" in body
+        stages = body.split("\nFROM ")
+        runtime = stages[-1]
+        assert "curl" not in runtime, "curl leaked into the final stage"
+
+
 def test_the_playground_ships_in_the_image():
     """`web/` was excluded from both the image and the build upload while it was
     an empty placeholder. It is now what the service serves at `/`, so an

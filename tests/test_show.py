@@ -14,7 +14,8 @@ import pytest
 
 from bridge.ontology import Department, TaskStatus, parse_opencue_job_name
 from bridge.privacy import MIN_POOL_SIZE, may_report_crew_load
-from seed.model import ShowSimulation
+from seed import model
+from seed.model import MAX_DAILY_HOURS, ShowSimulation
 
 NOW = datetime(2026, 9, 6, tzinfo=UTC)
 ACT_THREE = "SEQ0420"
@@ -149,6 +150,87 @@ class TestTheStoryIsPresent:
         series = [weekly.get(("comp-pool-2", w), 0.0) for w in weeks]
         baseline = statistics.mean(series[:-1])
         assert series[-1] > 1.7 * baseline, series
+
+
+class TestNobodyWorksAnImpossibleWeek:
+    """The ceiling in ``seed/model.py``, and the queue behind it.
+
+    Crew load is the figure the demo puts in front of a producer, and an
+    impossible one discredits every believable number beside it. Before the
+    ceiling the simulation logged 57.6 hours in a single day and 138
+    h/artist/week: the weekly aggregate divides by the roster, so the per-day
+    absurdity was invisible in the reported number that came from it.
+    """
+
+    def test_no_artist_works_more_than_the_ceiling_in_a_day(self, history):
+        per_day: dict[tuple[str, object], float] = defaultdict(float)
+        for log in history.time_logs:
+            per_day[(log.artist, log.day)] += log.hours
+        worst = max(per_day.values())
+        assert worst <= MAX_DAILY_HOURS + 1e-9, f"{worst:.1f}h in one day"
+
+    def test_no_pool_week_exceeds_what_the_daily_ceiling_allows(self, history):
+        """Seven ceiling days is the bound the daily rule implies.
+
+        Stated rather than left to be inferred: a future change that caps the
+        day but lets the queue double-book one should fail here.
+        """
+        weekly = history.weekly_hours_by_pool()
+        pool, week = max(weekly, key=weekly.get)
+        assert weekly[(pool, week)] <= 7 * MAX_DAILY_HOURS + 1e-9, (pool, week)
+
+    def test_the_ceiling_is_load_bearing(self, monkeypatch):
+        """Without it the same show produces a day nobody could have worked.
+
+        The two assertions above would pass on a tame dataset. This one proves
+        the dataset is not tame and the queue is what is holding it.
+        """
+        monkeypatch.setattr(model, "MAX_DAILY_HOURS", 10_000.0)
+        uncapped = ShowSimulation.load(now=NOW).run()
+        per_day: dict[tuple[str, object], float] = defaultdict(float)
+        for log in uncapped.time_logs:
+            per_day[(log.artist, log.day)] += log.hours
+        assert max(per_day.values()) > 24
+
+    def test_capping_reschedules_effort_rather_than_deleting_it(
+        self, history, monkeypatch
+    ):
+        """Settled plus outstanding is the effort that went in.
+
+        A cap that silently dropped the overflow would flatter the show, which
+        is the same dishonesty as the number it replaced.
+        """
+        monkeypatch.setattr(model, "MAX_DAILY_HOURS", 10_000.0)
+        raw = sum(log.hours for log in ShowSimulation.load(now=NOW).run().time_logs)
+        settled = sum(log.hours for log in history.time_logs)
+        assert settled + history.hours_outstanding == pytest.approx(raw)
+        # ...and the drop is a backlog, not a rounding of the show away.
+        assert 0 < history.hours_outstanding < 0.10 * raw
+
+    def test_the_queue_only_ever_moves_work_later(self, history, monkeypatch):
+        """A forward queue can delay an hour; it must never bring one forward.
+
+        Checked as cumulative hours per artist: at every date the settled run
+        has done no more than the uncapped one had by the same date.
+        """
+        monkeypatch.setattr(model, "MAX_DAILY_HOURS", 10_000.0)
+        uncapped = ShowSimulation.load(now=NOW).run()
+
+        def cumulative(logs):
+            per_artist_day: dict[str, dict[object, float]] = defaultdict(
+                lambda: defaultdict(float)
+            )
+            for log in logs:
+                per_artist_day[log.artist][log.day] += log.hours
+            return per_artist_day
+
+        before, after = cumulative(uncapped.time_logs), cumulative(history.time_logs)
+        for artist, days in after.items():
+            running_after = running_before = 0.0
+            for day in sorted(set(days) | set(before[artist])):
+                running_after += days.get(day, 0.0)
+                running_before += before[artist].get(day, 0.0)
+                assert running_after <= running_before + 1e-9, (artist, day)
 
 
 class TestBaselineIsHabitable:

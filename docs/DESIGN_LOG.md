@@ -29,9 +29,14 @@ here are true as of their date and are not retro-edited.
 ## 2026-09-05 — data plane
 
 Ontology, privacy layer, emitter, metric backfill, simulation, seeder driver —
-all complete and tested. A dry run produces **1,454 spans, 1,476 correlated log
-lines, 5,917 metric points** without touching the network. The same run against
-the live stack completes in ~4 s.
+all complete and tested. A dry run produces roughly **1,450 spans, 1,475
+correlated log lines and 5,900 metric points** without touching the network. The
+same run against the live stack completes in ~4 s.
+
+(Approximate on purpose: the show is anchored to *now*, so a run in a different
+week crosses a different number of shot boundaries and the totals move by a few
+either way. `uv run python -m seed.populate --dry-run` prints the exact figures
+for the day you run it.)
 
 ---
 
@@ -41,7 +46,7 @@ the live stack completes in ~4 s.
   department spans, comp spans in error status. Tempo accepts historical span
   times directly (no compression needed for traces, but the seeder warps them
   anyway so the trace and metric time axes align).
-- **Logs** — `{service_name="turnaround-bridge"}` carries ~1,476 lines. For one
+- **Logs** — `{service_name="turnaround-bridge"}` carries ~1,475 lines. For one
   shot the status transitions (`comp -> retake (iteration 1)`, `-> wip
   (iteration 3)`, …) and the `frame 118` cache-miss errors all resolve, each on
   the derived trace id. This is the fallback path for when the agent cannot

@@ -73,3 +73,38 @@ class TestConfigured:
 def test_configure_rejects_earliest_after_anchor():
     with pytest.raises(ValueError):
         timewarp.configure(anchor=ANCHOR, earliest=ANCHOR + timedelta(days=1), window=WINDOW)
+
+
+class TestTheGlobalIsScopedRatherThanAmbient:
+    """It is process-wide by design -- it is read three layers below anyone who
+    knows a warp exists -- but "the last call wins" is a bad way to discover
+    that two are live."""
+
+    def test_configuring_the_same_warp_twice_is_fine(self):
+        for _ in range(2):
+            timewarp.configure(anchor=ANCHOR, earliest=EARLIEST,
+                               window=timedelta(minutes=45))
+        assert timewarp.is_active()
+
+    def test_replacing_a_live_warp_with_a_different_one_is_refused(self):
+        """The symptom would be one series on two time bases, which reads as
+        corrupt data rather than as a misuse of this module."""
+        timewarp.configure(anchor=ANCHOR, earliest=EARLIEST, window=timedelta(minutes=45))
+        with pytest.raises(RuntimeError, match="already active"):
+            timewarp.configure(anchor=ANCHOR, earliest=EARLIEST,
+                               window=timedelta(minutes=10))
+
+    def test_warped_restores_whatever_was_there_before(self):
+        timewarp.configure(anchor=ANCHOR, earliest=EARLIEST, window=timedelta(minutes=45))
+        outer = timewarp.describe()
+        with timewarp.warped(anchor=ANCHOR, earliest=EARLIEST,
+                             window=timedelta(minutes=5)):
+            assert timewarp.describe() != outer
+        assert timewarp.describe() == outer
+
+    def test_warped_restores_after_a_failure_too(self):
+        assert not timewarp.is_active()
+        with pytest.raises(RuntimeError, match="seeding blew up"), timewarp.warped(
+                anchor=ANCHOR, earliest=EARLIEST, window=timedelta(minutes=5)):
+            raise RuntimeError("seeding blew up")
+        assert not timewarp.is_active()

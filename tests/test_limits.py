@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import threading
 
-from agent.limits import HOUR, Decision, Gatekeeper, client_id
+from agent.limits import (
+    HOUR,
+    MAX_TRACKED_CLIENTS,
+    Decision,
+    Gatekeeper,
+    client_id,
+)
 
 
 class Clock:
@@ -235,3 +241,40 @@ def test_the_visitor_id_is_the_client_not_the_proxy():
     assert client_id("  198.51.100.4  ", "10.0.0.1") == "198.51.100.4"
     assert client_id("", "10.0.0.1") == "10.0.0.1", "local runs have no proxy"
     assert client_id("", "") == "unknown"
+
+
+class TestARefusalLeavesNoTrace:
+    """``admit`` used to ``setdefault`` before deciding.
+
+    The empty deque it left behind aged out on the next ``_prune``, so the
+    window was never wrong -- but it counted toward ``MAX_TRACKED_CLIENTS``, and
+    that evicts from the *front* of an insertion-ordered dict. A burst of
+    refused callers could therefore push out the oldest genuine visitors and
+    hand them a brand-new hourly allowance.
+    """
+
+    def test_a_client_refused_on_the_daily_budget_is_not_tracked(self):
+        gate = Gatekeeper(daily=1, per_client=5, concurrent=5)
+        assert gate.admit("first").allowed
+        gate.release()
+        assert not gate.admit("second").allowed
+        assert "second" not in gate._clients
+
+    def test_a_client_refused_for_being_busy_is_not_tracked(self):
+        gate = Gatekeeper(daily=100, per_client=5, concurrent=1)
+        assert gate.admit("first").allowed  # holds the only slot
+        assert gate.admit("second").reason == "busy"
+        assert "second" not in gate._clients
+
+    def test_refusals_cannot_evict_a_real_visitor_from_the_table(self):
+        """The consequence, stated as behaviour rather than as bookkeeping."""
+        gate = Gatekeeper(daily=100, per_client=1, concurrent=1)
+        assert gate.admit("regular").allowed
+        gate.release()
+        for i in range(MAX_TRACKED_CLIENTS * 2):
+            gate.admit(f"burst-{i}")  # every one refused: no concurrency slot
+        assert gate.admit("regular").reason == "per_visitor"
+
+    def test_remaining_counts_the_slot_just_taken(self):
+        gate = Gatekeeper(daily=100, per_client=3, concurrent=5)
+        assert [gate.admit("v").remaining for _ in range(3)] == [2, 1, 0]

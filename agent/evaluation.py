@@ -92,6 +92,14 @@ class EvalResult:
 
 _NUMBER_RE = re.compile(r"(\d+(?:\.\d+)?)")
 
+#: Three decimals or more in a producer-facing answer. Two is the most any
+#: figure in this domain earns; beyond that the number is a float that escaped
+#: rather than a measurement. The recipes in ``agent/vocabulary.py`` round in
+#: PromQL so the long form never reaches the model -- this is the check that
+#: notices when a new query forgets to, which is otherwise invisible until a
+#: demo puts ``63.16190476190476h`` on a screen.
+_LONG_FLOAT_RE = re.compile(r"\d+\.\d{3,}")
+
 
 def _numbers(text: str) -> list[float]:
     return [float(m) for m in _NUMBER_RE.findall(text)]
@@ -147,6 +155,20 @@ class DeterministicJudge:
                 f"{SUBFLOOR_POOL!r} (a {FLOOR}-minus-person pool) appears in the "
                 "answer or evidence chain" if leaked else
                 f"no pool below the floor of {FLOOR} is named"
+            ),
+            actor_type="deterministic",
+        ))
+
+        # 4. presentation: no raw float survived into the answer
+        long_floats = _LONG_FLOAT_RE.findall(answer)
+        results.append(EvalResult(
+            name="figures_are_readable",
+            score=0.0 if long_floats else 1.0,
+            label="fail" if long_floats else "pass",
+            explanation=(
+                f"{len(long_floats)} figure(s) carry three or more decimals "
+                f"({', '.join(long_floats[:3])}) -- round in the PromQL, not in the prompt"
+                if long_floats else "every figure is quoted to two decimals or fewer"
             ),
             actor_type="deterministic",
         ))

@@ -104,7 +104,14 @@ class Gatekeeper:
         with self._lock:
             now = self.clock()
             self._prune(now)
-            mine = self._clients.setdefault(client_id, deque())
+            # Read, do not insert. A refused caller used to leave an empty deque
+            # behind: harmless for the window (the next `_prune` drops it) but
+            # not for `MAX_TRACKED_CLIENTS`, which evicts from the *front* of an
+            # insertion-ordered dict -- so a burst of refusals could forget the
+            # oldest genuine visitors and hand them a fresh hourly allowance.
+            # The entry is created below, where the slot is actually taken.
+            mine = self._clients.get(client_id)
+            seen = len(mine) if mine is not None else 0
 
             # Ordered hardest-first, so the refusal names the limit that will
             # actually keep blocking. Telling someone to retry in 20s for a
@@ -121,7 +128,7 @@ class Gatekeeper:
                     retry_after=self._drains_in(self._all, self.daily_window, now),
                 )
 
-            if len(mine) >= self.per_client:
+            if seen >= self.per_client:
                 return Decision(
                     allowed=False,
                     reason="per_visitor",
@@ -142,13 +149,13 @@ class Gatekeeper:
                         "minute; try again in a moment."
                     ),
                     retry_after=20,
-                    remaining=self.per_client - len(mine),
+                    remaining=self.per_client - seen,
                 )
 
-            mine.append(now)
+            self._clients.setdefault(client_id, deque()).append(now)
             self._all.append(now)
             self._in_flight += 1
-            return Decision(allowed=True, remaining=self.per_client - len(mine))
+            return Decision(allowed=True, remaining=self.per_client - seen - 1)
 
     def release(self) -> None:
         """Give back a concurrency slot. Never drops below zero: an extra

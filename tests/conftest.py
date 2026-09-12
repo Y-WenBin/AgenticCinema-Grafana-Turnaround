@@ -5,8 +5,8 @@ test configures it, but an autouse reset keeps a stray call in one test from
 bleeding into the next.
 
 The suite is also offline by contract (tests/TESTPLAN.md): no Vertex, no Grafana
-Cloud, no ``mcp-grafana`` binary, and no ``.env``. Three autouse fixtures hold
-that -- see below.
+Cloud, no ``mcp-grafana`` binary, no ``.env``, and nothing written outside the
+test's own tmpdir. The autouse fixtures below hold that.
 """
 
 import os
@@ -76,3 +76,17 @@ def _no_real_dotenv(monkeypatch, tmp_path):
 
     monkeypatch.setattr(dotenv, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(dotenv, "env_path", lambda: tmp_path / ".env")
+
+
+@pytest.fixture(autouse=True)
+def _no_writes_outside_the_tmpdir(monkeypatch, tmp_path):
+    """Keep the write-back audit log inside the test's own directory.
+
+    ``RecordingKitsu`` now defaults its log to the XDG state directory, which is
+    the right home for it and the wrong thing for a suite to append to: a test
+    that constructs one without a path would otherwise leave rows in the
+    developer's ``~/.local/state/turnaround/writeback.jsonl`` and keep them
+    there. The same hermeticity argument as ``_no_real_dotenv`` -- and the same
+    reason for autouse, since the damage is silent.
+    """
+    monkeypatch.setenv("TURNAROUND_WRITEBACK_LOG", str(tmp_path / "writeback.jsonl"))

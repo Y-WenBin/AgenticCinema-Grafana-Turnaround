@@ -14,8 +14,15 @@ work), and an entry point reports the result as a sentence with an exit code.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
+# The real repository root, bound at import before ``tests/conftest.py``
+# repoints ``dotenv.REPO_ROOT`` at a tmpdir. That fixture exists so no test
+# reads the developer's ``.env``; this one has to read the checked-in
+# ``.env.example``, which is a tracked file rather than a secret.
+from bridge.dotenv import REPO_ROOT
 from bridge.startup import ConfigError, is_placeholder, real, reporting, require
 
 
@@ -175,3 +182,52 @@ class TestSettingsHonourPlaceholders:
         cfg = engine.resolved_settings()
         assert cfg.grafana_url == "https://stack.grafana.net"   # trailing / stripped
         assert cfg.grafana_ready and cfg.vertex_ready
+
+
+class TestTheExampleFileIsHonest:
+    """Every key in ``.env.example`` is a key something reads.
+
+    ``.env.example`` is the first file a new user copies, so anything in it
+    reads as a prerequisite. It carried five that nothing read, and two of them
+    were expensive: ``MCP_GRAFANA_RO_URL`` and ``MCP_GRAFANA_RW_URL`` pointed at
+    ``localhost:8000`` and ``:8001``, implying two MCP HTTP servers a user had
+    to stand up -- when the design spawns ``mcp-grafana`` over stdio with no
+    port at all. A false prerequisite in that file costs more than a missing
+    one.
+    """
+
+    #: Only the packages that ship. A key read solely by a test is still dead
+    #: weight in the file a user copies.
+    SOURCES = ("agent", "bridge", "seed", "grafana", "observability", "deploy")
+
+    @staticmethod
+    def _keys() -> list[str]:
+        text = (REPO_ROOT / ".env.example").read_text()
+        keys = []
+        for line in text.splitlines():
+            line = line.strip().lstrip("#").strip()  # commented-out keys count
+            match = re.match(r"^([A-Z][A-Z0-9_]*)=", line)
+            if match:
+                keys.append(match.group(1))
+        return keys
+
+    def test_the_file_parses_into_keys(self):
+        keys = self._keys()
+        assert len(keys) >= 10
+        assert "GRAFANA_URL" in keys
+        assert len(keys) == len(set(keys)), "a key appears twice"
+
+    @pytest.mark.parametrize("key", _keys.__func__())
+    def test_every_key_is_read_by_something_that_ships(self, key):
+        haystack = ""
+        for source in self.SOURCES:
+            root = REPO_ROOT / source
+            if root.is_dir():
+                for path in root.rglob("*"):
+                    if path.suffix in (".py", ".sh", ".yaml", ".yml") and path.is_file():
+                        haystack += path.read_text()
+        haystack += (REPO_ROOT / "Dockerfile").read_text()
+        assert key in haystack, (
+            f"{key} is in .env.example but nothing reads it -- delete it, or the "
+            "file is telling new users to configure something that does nothing"
+        )

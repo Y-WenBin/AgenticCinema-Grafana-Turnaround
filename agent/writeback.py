@@ -6,7 +6,7 @@ There is no live Kitsu in this environment (PROJECT.md, "Deferred by decision"
 -- no container runtime), so the real ``gazu`` path sits behind a Protocol and a
 recording implementation stands in. The recorder does two useful things:
 
-* appends every write to ``agent/_writeback.jsonl`` (gitignored) as an audit log;
+* appends every write to a JSONL audit log (see :func:`default_log_path`);
 * drops a Grafana annotation so the write-back is visible on the same
   dashboards the evidence came from -- the loop closes on screen.
 
@@ -15,17 +15,49 @@ Swapping in a real studio Kitsu is one class, no caller changes.
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
 from bridge.annotate import Annotator, Mark
 
-_LOG_PATH = Path(__file__).resolve().parent / "_writeback.jsonl"
 _ACTIONS = ("note", "status")
+_LOG_ENV = "TURNAROUND_WRITEBACK_LOG"
+
+#: One lock and one counter for the process, not one per instance. Each ask
+#: builds its own :class:`RecordingKitsu` through :func:`default_writeback`, and
+#: ``TURNAROUND_CONCURRENT_ASKS`` defaults to 2 -- so per-instance state would
+#: have let two runs mint the same ``ref`` (the timestamp is second-resolution)
+#: and interleave two appends into one line. ``next()`` on an ``itertools.count``
+#: is a single C call and needs no lock of its own.
+_LOG_LOCK = threading.Lock()
+_SEQ = itertools.count(1)
+
+
+def default_log_path() -> Path:
+    """Where the audit log goes when the caller does not say.
+
+    It used to be ``Path(__file__).parent/"_writeback.jsonl"`` -- inside the
+    package. From a checkout that is merely untidy; from a wheel it is
+    site-packages, which is frequently read-only and is never somewhere a user
+    would think to look for their own audit trail. On Cloud Run it is a
+    container layer that vanishes with the instance.
+
+    So: an explicit ``TURNAROUND_WRITEBACK_LOG`` wins, then the XDG state
+    directory, which is the standard home for exactly this -- data a program
+    keeps between runs that is not configuration and not a cache.
+    """
+    override = (os.environ.get(_LOG_ENV) or "").strip()
+    if override:
+        return Path(override).expanduser()
+    state = (os.environ.get("XDG_STATE_HOME") or "").strip()
+    base = Path(state).expanduser() if state else Path.home() / ".local" / "state"
+    return base / "turnaround" / "writeback.jsonl"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,26 +78,38 @@ class KitsuWriteBack(Protocol):
 class RecordingKitsu:
     """Records write-backs to a JSONL file and (if Grafana is configured) to an annotation."""
 
-    log_path: Path = _LOG_PATH
+    log_path: Path = field(default_factory=default_log_path)
     annotator: Annotator | None = None
-    _seq: int = 0
 
     def write(self, *, action: str, shot_id: str, department: str, text: str) -> WriteReceipt:
         if action not in _ACTIONS:
             return WriteReceipt(False, "", f"unknown action {action!r}; expected one of {_ACTIONS}")
-        self._seq += 1
-        ref = f"local-{datetime.now(UTC):%Y%m%dT%H%M%S}-{self._seq:02d}"
+        ref = f"local-{datetime.now(UTC):%Y%m%dT%H%M%S}-{next(_SEQ):02d}"
         record = {
             "ref": ref, "action": action, "shot_id": shot_id,
             "department": department, "text": " ".join(text.split()),
             "at": datetime.now(UTC).isoformat(),
         }
-        with self.log_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record) + "\n")
+        try:
+            with _LOG_LOCK:
+                self.log_path.parent.mkdir(parents=True, exist_ok=True)
+                with self.log_path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(record) + "\n")
+        except OSError as exc:
+            # A read-only install or a full disk must not take the run down --
+            # the rest of this module goes to some trouble to return receipts
+            # rather than raise, and an audit log is the last thing that should
+            # be the exception. No annotation either: a Grafana mark asserts
+            # that the write-back was recorded, and it was not.
+            return WriteReceipt(
+                False, ref,
+                f"could not record the write-back at {self.log_path}: {exc}. "
+                f"Set {_LOG_ENV} to a writable path.",
+            )
 
         annotated = self._annotate(record)
-        detail = "recorded" + (" and annotated in Grafana" if annotated else "")
-        return WriteReceipt(True, ref, detail)
+        detail = f"recorded in {self.log_path}"
+        return WriteReceipt(True, ref, detail + (" and annotated in Grafana" if annotated else ""))
 
     def _annotate(self, record: dict) -> bool:
         ann = self.annotator or Annotator()

@@ -106,11 +106,17 @@ def instrumentation(enabled: bool):
         return None
 
 
-def judge_generator(enabled: bool, model: str,
-                   thinking_budget: int = 0) -> Callable[[str], str] | None:
-    """A Vertex-backed ``generate`` for the LLM judge, or None if unavailable."""
-    if not enabled:
-        return None
+def judge_generator(model: str,
+                    thinking_budget: int = 0) -> Callable[[str], str] | None:
+    """A Vertex-backed ``generate`` for the LLM judge, or None if unavailable.
+
+    It used to take an ``enabled`` flag for symmetry with
+    :func:`instrumentation`. The symmetry was false: the only caller asks for
+    the judge from inside ``if evaluate``, so the flag was a known-true value
+    threaded through a branch that could never be taken -- and the test
+    covering that branch was covering a caller that did not exist. The one
+    thing this returns ``None`` for now is a judge it genuinely cannot build.
+    """
     try:
         from agent.evaluation import vertex_generator
 
@@ -267,8 +273,7 @@ async def _run(
             question=question, answer=outcome.answer, timeline=system.timeline,
             ledger=system.ledger, response_id=outcome.response_id,
             telemetry=obs.telemetry if obs is not None else None,
-            llm_generate=judge_generator(evaluate, cfg.analyst_model,
-                                         cfg.thinking_budget),
+            llm_generate=judge_generator(cfg.analyst_model, cfg.thinking_budget),
         )
         if obs is not None:
             obs.flush()

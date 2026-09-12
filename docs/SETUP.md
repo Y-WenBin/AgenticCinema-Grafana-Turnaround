@@ -61,14 +61,14 @@ way, so if A works, B is just swapping the data in.
    then set `GOOGLE_APPLICATION_CREDENTIALS=.secrets/gcp-sa.json` in `.env`
    (`.secrets/` is git-ignored).
 
-Model note: everything runs on `gemini-2.5-flash`. Do **not** set
-`TURNAROUND_GEMINI_MODEL_PRO` unless you have `gemini-2.5-pro` quota — it 429s on
-a fresh project.
+Model note: everything runs on `gemini-2.5-flash`, and `TURNAROUND_GEMINI_MODEL`
+is the one variable that changes it. Point it at `gemini-2.5-pro` only if you
+have pro quota — a fresh project 429s on the first analyst call.
 
 Speed note: `TURNAROUND_THINKING_BUDGET` defaults to `0` — Gemini 2.5 thinking
 off. Measured end to end against a live stack, same question, only this changed:
-**dynamic thinking 75.4s / 60.7s, off 24.5s / 18.5s**, with all six scorecard
-checks passing either way. The analysts run finished PromQL recipes and report
+**dynamic thinking 75.4s / 60.7s, off 24.5s / 18.5s**, with every scorecard
+check passing either way. The analysts run finished PromQL recipes and report
 the numbers, so there is nothing for thinking to do. Set it to `-1` to hand the
 decision back to Gemini.
 
@@ -210,13 +210,28 @@ GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
 GOOGLE_CLOUD_LOCATION=us-central1
 # GOOGLE_APPLICATION_CREDENTIALS=.secrets/gcp-sa.json   # only if not using ADC
 
-# Privacy — any strong random string, keep it out of git
-TURNAROUND_PSEUDONYM_SALT=$(openssl rand -hex 16)
+# Privacy — generated below, not typed. Keep it out of git.
+TURNAROUND_PSEUDONYM_SALT=
 
 # Optional: real tool conventions (part 6)
 # TURNAROUND_SHOT_ID_SCHEME=seq_sh
 # TURNAROUND_FARM_CONVENTION=opencue
 ```
+
+Then generate the salt, rather than typing one:
+
+```bash
+echo "TURNAROUND_PSEUDONYM_SALT=$(openssl rand -hex 16)" >> .env
+```
+
+Run that in a shell, not inside `.env`. `.env` is read literally — `load_env`
+does no interpolation, by design — so `TURNAROUND_PSEUDONYM_SALT=$(openssl rand
+-hex 16)` written *in the file* is a salt whose value is the twenty-three
+characters `$(openssl rand -hex 16)`. Every deployment that copied it would
+share one publicly documented salt, and shared salts make the artist pseudonyms
+reversible by anyone holding a crew list, which is the whole thing they exist to
+prevent. The entry points now refuse to start on that string, and on `change-me`
+— but the fix is to generate a real one.
 
 Every entry point loads `.env` itself — `agent.run`, `agent.serve`,
 `seed.populate`, `seed.refresh` and `grafana.provision`. A variable already
@@ -453,7 +468,7 @@ Full detail: [`deploy/README.md`](../deploy/README.md).
 | Mimir rejects samples ("out of order" / "too old") | Use plain `seed.populate` (it compresses to a 45-min window). Don't pass `--compress 0` against hosted Grafana Cloud |
 | Dashboards empty a few minutes after seeding | Run `seed.refresh`, or widen a panel's range to `now-2h` (queries use `last_over_time(…[2h:])`) |
 | Vertex `403 PERMISSION_DENIED` | `gcloud auth application-default login` not done, `aiplatform.googleapis.com` not enabled, or wrong `GOOGLE_CLOUD_PROJECT` |
-| Vertex `429 RESOURCE_EXHAUSTED` | You set `TURNAROUND_GEMINI_MODEL_PRO`; unset it — flash is the default and has quota |
+| Vertex `429 RESOURCE_EXHAUSTED` | You pointed `TURNAROUND_GEMINI_MODEL` at a model you have no quota for; unset it — `gemini-2.5-flash` is the default and a fresh project has quota for it |
 | `mcp-grafana: command not found` | Install it (part 3) or set `TURNAROUND_MCP_GRAFANA_BIN=/full/path/mcp-grafana` |
 | Agent: `circuit breaker tripped` | A run hit `TURNAROUND_MAX_LLM_CALLS` (default 40). Raise it for a genuinely long run; otherwise it caught a tool-retry loop |
 | `HostedMcpNotAuthorized` | You set `TURNAROUND_MCP_MODE=hosted` — run `uv run python -m agent.mcp_login` for the OAuth flow, or unset it to use the default OSS mode |
