@@ -23,6 +23,7 @@ from agent.config import (
     Settings,
     _find_mcp_grafana,
     _int_env,
+    _signed_int_env,
     bootstrap_vertex,
     load_env,
     settings,
@@ -366,3 +367,100 @@ def test_an_absolute_credentials_path_is_left_alone(clean_env, monkeypatch):
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/abs/sa.json")
     bootstrap_vertex()
     assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == "/abs/sa.json"
+
+
+class TestAValueWeCannotUseSaysSo:
+    """The silence here is why N-2 went unnoticed for the life of the project.
+
+    A trailing comment made every rate limit unparseable, ``_int_env`` answered
+    with the default, and the defaults happened to match the numbers in the
+    file -- so nothing looked wrong anywhere. The parser bug is fixed; this is
+    the reason it was *invisible*, and it would have hidden the next one too.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _forget_previous_warnings(self):
+        config._REJECTED.clear()
+        yield
+        config._REJECTED.clear()
+
+    def test_an_unset_value_is_not_a_mistake_and_says_nothing(self, clean_env, capsys):
+        assert _int_env("TURNAROUND_ASKS_PER_DAY", 200) == 200
+        assert capsys.readouterr().err == ""
+
+    def test_a_value_we_cannot_parse_names_itself_and_the_number_in_force(
+        self, clean_env, monkeypatch, capsys
+    ):
+        monkeypatch.setenv("TURNAROUND_ASKS_PER_DAY", "50     # bound the bill")
+        assert _int_env("TURNAROUND_ASKS_PER_DAY", 200) == 200
+        err = capsys.readouterr().err
+        assert "TURNAROUND_ASKS_PER_DAY" in err
+        assert "50     # bound the bill" in err   # quoted, so the cause is visible
+        assert "200" in err                       # and what is actually in force
+
+    def test_zero_where_a_positive_number_belongs_is_reported(
+        self, clean_env, monkeypatch, capsys
+    ):
+        """Someone setting 0 to mean "no limit" gets 200 and needs to know."""
+        monkeypatch.setenv("TURNAROUND_ASKS_PER_DAY", "0")
+        assert _int_env("TURNAROUND_ASKS_PER_DAY", 200) == 200
+        assert "greater than zero" in capsys.readouterr().err
+
+    def test_it_is_said_once_not_once_per_request(self, clean_env, monkeypatch, capsys):
+        """``agent/serve.py`` calls ``load_settings()`` per request."""
+        monkeypatch.setenv("TURNAROUND_ASKS_PER_DAY", "lots")
+        for _ in range(5):
+            _int_env("TURNAROUND_ASKS_PER_DAY", 200)
+        assert capsys.readouterr().err.count("TURNAROUND_ASKS_PER_DAY") == 1
+
+    def test_a_different_bad_value_is_reported_again(
+        self, clean_env, monkeypatch, capsys
+    ):
+        """Deduping on the name alone would swallow the next mistake."""
+        monkeypatch.setenv("TURNAROUND_ASKS_PER_DAY", "lots")
+        _int_env("TURNAROUND_ASKS_PER_DAY", 200)
+        monkeypatch.setenv("TURNAROUND_ASKS_PER_DAY", "loads")
+        _int_env("TURNAROUND_ASKS_PER_DAY", 200)
+        assert capsys.readouterr().err.count("TURNAROUND_ASKS_PER_DAY") == 2
+
+    def test_the_thinking_budget_keeps_its_three_meanings(
+        self, clean_env, monkeypatch, capsys
+    ):
+        """0 (off) and -1 (dynamic) are values, not rejects; -2 is neither."""
+        for raw, expected in (("0", 0), ("-1", -1), ("256", 256)):
+            monkeypatch.setenv("TURNAROUND_THINKING_BUDGET", raw)
+            assert _signed_int_env("TURNAROUND_THINKING_BUDGET", 99) == expected
+        assert capsys.readouterr().err == ""
+        monkeypatch.setenv("TURNAROUND_THINKING_BUDGET", "-2")
+        assert _signed_int_env("TURNAROUND_THINKING_BUDGET", 99) == 99
+        assert "-1 (dynamic)" in capsys.readouterr().err
+
+
+class TestTheParserHandlesTheShapesPeopleWrite:
+    """Cases found by probing the phase-2 parser rather than by reading it."""
+
+    def test_a_hash_inside_a_value_does_not_protect_the_real_comment(self, clean_env):
+        """Partitioning on the *first* ``#`` stopped at the payload's own one
+        and left ``   # my token`` in an Authorization header."""
+        _write_env(clean_env, "OTEL_EXPORTER_OTLP_HEADERS=Basic%20ab#cd   # my token\n")
+        load_env()
+        assert os.environ["OTEL_EXPORTER_OTLP_HEADERS"] == "Basic%20ab#cd"
+
+    def test_an_unterminated_quote_is_syntax_not_data(self, clean_env):
+        """A stray ``"`` riding into a token is a 401 nobody can explain."""
+        _write_env(clean_env, 'GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_abc\n')
+        load_env()
+        assert os.environ["GRAFANA_SERVICE_ACCOUNT_TOKEN"] == "glsa_abc"
+
+    def test_an_exported_line_is_still_a_key(self, clean_env):
+        """``deploy/deploy.sh`` sources this same file with ``set -a``, so a
+        user's ``export`` lines work there. Both readers of one file have to
+        agree about what is in it."""
+        _write_env(clean_env, "export GRAFANA_URL=https://stack.grafana.net\n")
+        load_env()
+        assert os.environ["GRAFANA_URL"] == "https://stack.grafana.net"
+
+    def test_a_key_that_merely_starts_with_export_is_untouched(self, clean_env):
+        _write_env(clean_env, "GRAFANA_URL=https://ok\nexported=1\n")
+        load_env()
+        assert os.environ["exported"] == "1"

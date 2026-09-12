@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -94,13 +95,46 @@ DEFAULT_CONCURRENT_ASKS = 2     # a run holds an MCP subprocess for ~40s
 DEFAULT_THINKING_BUDGET = 0
 
 
+#: Rejections already reported, so a per-request ``load_settings()`` does not
+#: reprint one line per request. Keyed on the value as well as the name, so
+#: changing a bad value to a different bad value is still reported once.
+_REJECTED: set[tuple[str, str]] = set()
+
+
+def _reject(name: str, raw: str, default: int, why: str) -> int:
+    """Fall back to ``default``, but say so. Once.
+
+    Silence here is what let the rate limits shipped in ``.env.example`` be
+    inert for the life of the project: a trailing comment made every value
+    unparseable, this function answered with the default, and the defaults
+    happened to match the numbers in the file -- so nothing looked wrong
+    anywhere. The parser bug is fixed (``bridge/dotenv.py``), but the reason it
+    was *invisible* was here, and it would have hidden the next one too.
+
+    A value the user did not set is not a mistake and says nothing. A value they
+    set and we cannot use always says something: a typo, a stray unit, ``1_000``
+    or a zero where a positive number belongs is a decision that did not take
+    effect, and a budget that did not take effect is the kind that arrives as a
+    bill.
+    """
+    if (name, raw) not in _REJECTED:
+        _REJECTED.add((name, raw))
+        print(f"({name}={raw!r} ignored: {why}; using {default})", file=sys.stderr)
+    return default
+
+
 def _int_env(name: str, default: int) -> int:
     """A positive integer from the environment, or ``default``."""
-    try:
-        value = int(os.environ.get(name, "").strip())
-        return value if value > 0 else default
-    except (TypeError, ValueError):
+    raw = os.environ.get(name, "").strip()
+    if not raw:
         return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return _reject(name, raw, default, "not a whole number")
+    if value <= 0:
+        return _reject(name, raw, default, "must be greater than zero")
+    return value
 
 
 def _signed_int_env(name: str, default: int) -> int:
@@ -115,8 +149,10 @@ def _signed_int_env(name: str, default: int) -> int:
     try:
         value = int(raw)
     except ValueError:
-        return default
-    return value if value >= -1 else default
+        return _reject(name, raw, default, "not a whole number")
+    if value < -1:
+        return _reject(name, raw, default, "must be -1 (dynamic), 0 (off) or a ceiling")
+    return value
 
 
 # --------------------------------------------------------------------------- #

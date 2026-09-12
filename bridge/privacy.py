@@ -29,6 +29,19 @@ from bridge.startup import ConfigError, is_placeholder
 MIN_POOL_SIZE = 3
 
 _SALT_ENV = "TURNAROUND_PSEUDONYM_SALT"
+
+#: The one command that produces a working salt, defined once and quoted
+#: wherever it is offered -- the error below and ``docs/SETUP.md``.
+#:
+#: It is a constant rather than three copies of a string because the last time
+#: they were three copies they were all *wrong in the same way*: appending to a
+#: ``.env`` copied from ``.env.example`` could not take effect, because a
+#: repeated key took its first value and the example file already set this one
+#: to ``change-me``. The instruction read correctly and did nothing. Nothing
+#: catches that by reading; ``tests/test_startup.py`` catches it by running the
+#: command against a copy of ``.env.example`` and checking a pseudonym comes
+#: out the other side.
+SALT_COMMAND = f'echo "{_SALT_ENV}=$(openssl rand -hex 16)" >> .env'
 _PSEUDONYM_LENGTH = 8
 
 
@@ -56,7 +69,7 @@ def _salt() -> bytes:
             "artist telemetry with a guessable pseudonym salt: without a real "
             "salt the pseudonyms are reversible by anyone who can list the crew.\n"
             "  generate one and append it to .env:\n"
-            f'    echo "{_SALT_ENV}=$(openssl rand -hex 16)" >> .env'
+            f"    {SALT_COMMAND}"
         )
     return salt.encode()
 

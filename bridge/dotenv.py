@@ -51,39 +51,74 @@ def env_path() -> Path | None:
     return fallback if fallback.is_file() else None
 
 
+#: A key may be written ``export KEY=value``. Valid shell, and this project's
+#: own ``deploy/deploy.sh`` sources ``.env`` with ``set -a``, so a user whose
+#: file works for the deploy script would otherwise find every ``export`` line
+#: silently invisible to the Python entry points reading the same file. Two
+#: consumers of one file must not disagree about what is in it.
+_EXPORT = "export "
+
+
+def _key(raw: str) -> str:
+    """The key from the left of the first ``=``, with any ``export`` stripped."""
+    key = raw.strip()
+    if key.startswith(_EXPORT):
+        key = key[len(_EXPORT):].strip()
+    return key
+
+
+def _strip_comment(value: str) -> str:
+    """Remove a trailing ``# ...`` that is preceded by whitespace.
+
+    Scans for the first ``#`` that *qualifies*, rather than partitioning on the
+    first ``#`` there is. Those differ whenever a value legitimately contains
+    one: ``Basic%20ab#cd   # my token`` has a leading ``#`` that is part of the
+    payload, and stopping at it left the real comment in the value.
+    """
+    for i, char in enumerate(value):
+        if char == "#" and (i == 0 or value[i - 1].isspace()):
+            return value[:i]
+    return value
+
+
 def _value(raw: str) -> str:
     """One ``.env`` value: quotes honoured, trailing comment removed.
 
     An inline comment needs whitespace before the ``#``, and a quoted value has
-    none at all -- the same rule ``python-dotenv`` and Compose use, and the
-    reason it matters here is ``OTEL_EXPORTER_OTLP_HEADERS``, whose base64 may
-    legitimately contain a ``#`` with no space in front of it.
+    no comment inside it at all -- the same rule ``python-dotenv`` and Compose
+    use, and the reason it matters here is ``OTEL_EXPORTER_OTLP_HEADERS``, whose
+    base64 may legitimately contain a ``#`` with nothing in front of it.
 
     Before this, ``TURNAROUND_ASKS_PER_HOUR=8      # per visitor`` parsed as the
-    string ``"8      # per visitor"``. ``agent/config.py`` reads it with
-    ``_int_env``, which answers an unparseable value with the default -- so the
-    three rate limits shipped in ``.env.example`` were *inert*, and a user
-    lowering their daily budget to bound a bill silently kept 200. Nothing
-    looked wrong because the defaults matched the file.
+    whole string. ``agent/config.py`` reads it with ``_int_env``, which answered
+    an unusable value with the default -- so the three rate limits shipped in
+    ``.env.example`` were *inert*, and a user lowering their daily budget to
+    bound a real bill silently kept 200. Nothing looked wrong, because the
+    defaults matched the file.
+
+    An *unterminated* quote is treated as punctuation the user meant as syntax,
+    not as data -- the lenient reading the original parser had, kept because the
+    alternative is a token that silently carries a stray ``"`` into an
+    Authorization header.
     """
     value = raw.strip()
     for quote in ('"', "'"):
-        if value.startswith(quote) and value.find(quote, 1) > 0:
-            return value[1:value.find(quote, 1)]
-    head, hash_, _ = value.partition("#")
-    if hash_ and (not head or head[-1].isspace()):
-        value = head
-    return value.strip()
+        if value.startswith(quote):
+            close = value.find(quote, 1)
+            if close > 0:
+                return value[1:close]
+    return _strip_comment(value).strip().strip('"').strip("'")
 
 
 def load_env(path: Path | None = None) -> None:
     """Populate ``os.environ`` from ``.env`` for keys that are not already set.
 
     A real exported variable (CI, Cloud Run, ``set -a && . ./.env``) is never
-    overwritten. Lines are ``KEY=VALUE``; blank lines and whole-line ``#``
-    comments are skipped, a trailing comment and surrounding quotes are removed
-    from the value (:func:`_value`). No interpolation -- values are taken
-    literally, which is what an OTLP auth header needs.
+    overwritten. Lines are ``KEY=VALUE`` or ``export KEY=VALUE``; blank lines
+    and whole-line ``#`` comments are skipped, a trailing comment and
+    surrounding quotes are removed from the value (:func:`_value`). No
+    interpolation -- values are taken literally, which is what an OTLP auth
+    header needs.
 
     **A repeated key takes its last value**, which is the convention everything
     else in this space follows and, more to the point, is what makes the
@@ -107,6 +142,6 @@ def load_env(path: Path | None = None) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        parsed[key.strip()] = _value(value)
+        parsed[_key(key)] = _value(value)
     for key, value in parsed.items():
         os.environ.setdefault(key, value)

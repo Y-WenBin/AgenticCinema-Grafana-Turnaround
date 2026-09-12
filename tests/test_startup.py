@@ -14,15 +14,22 @@ work), and an entry point reports the result as a sentence with an exit code.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
+
+from agent.config import settings
 
 # The real repository root, bound at import before ``tests/conftest.py``
 # repoints ``dotenv.REPO_ROOT`` at a tmpdir. That fixture exists so no test
 # reads the developer's ``.env``; this one has to read the checked-in
 # ``.env.example``, which is a tracked file rather than a secret.
-from bridge.dotenv import REPO_ROOT
+from bridge.dotenv import REPO_ROOT, load_env
+from bridge.privacy import SALT_COMMAND, MissingSalt, pseudonymize
 from bridge.startup import ConfigError, is_placeholder, real, reporting, require
 
 
@@ -231,3 +238,110 @@ class TestTheExampleFileIsHonest:
             f"{key} is in .env.example but nothing reads it -- delete it, or the "
             "file is telling new users to configure something that does nothing"
         )
+
+
+class TestTheDocumentedSetupActuallyWorks:
+    """Run the instructions instead of reading them.
+
+    Two bugs shipped past a careful review because the documented commands were
+    only ever read: appending the salt could not take effect (a repeated key
+    took its *first* value, and ``.env.example`` already set that key), and
+    every rate limit in ``.env.example`` was inert (a trailing comment was part
+    of the value). Both were obvious the moment anyone ran them on a clean
+    copy. So this runs them.
+    """
+
+    @staticmethod
+    def _example_copy(tmp_path: Path) -> Path:
+        """What a new user has after step one of the README."""
+        env = tmp_path / ".env"
+        env.write_text((REPO_ROOT / ".env.example").read_text())
+        return env
+
+    def test_the_command_the_error_prints_is_the_one_everywhere_it_appears(
+        self, monkeypatch
+    ):
+        """One string, quoted in three places. They drifted once already, and
+        ``.env.example`` matters most of the three: it is the file a reader is
+        looking at when they see ``change-me``."""
+        for where in ("docs/SETUP.md", ".env.example"):
+            assert SALT_COMMAND in (REPO_ROOT / where).read_text(), where
+        monkeypatch.delenv("TURNAROUND_PSEUDONYM_SALT", raising=False)
+        with pytest.raises(MissingSalt) as caught:
+            pseudonymize("nightfall:comp-pool-1:0")
+        assert SALT_COMMAND in str(caught.value)
+
+    def test_the_example_copy_is_refused_before_anything_is_emitted(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.delenv("TURNAROUND_PSEUDONYM_SALT", raising=False)
+        load_env(self._example_copy(tmp_path))
+        with pytest.raises(MissingSalt):
+            pseudonymize("nightfall:comp-pool-1:0")
+
+    @pytest.mark.skipif(shutil.which("openssl") is None, reason="needs openssl")
+    def test_running_the_documented_command_produces_a_working_salt(
+        self, monkeypatch, tmp_path
+    ):
+        """The whole loop: copy the example, run exactly what we tell people to
+        run, and check a pseudonym comes out. This is the test that would have
+        failed on the bug rather than shipping it."""
+        monkeypatch.delenv("TURNAROUND_PSEUDONYM_SALT", raising=False)
+        env = self._example_copy(tmp_path)
+        subprocess.run(SALT_COMMAND, shell=True, cwd=tmp_path, check=True)
+
+        load_env(env)
+        pseudonym = pseudonymize("nightfall:comp-pool-1:0")
+        assert pseudonym and "nightfall" not in pseudonym
+
+    @pytest.mark.skipif(shutil.which("openssl") is None, reason="needs openssl")
+    def test_the_generated_salt_is_the_one_that_gets_used(self, monkeypatch, tmp_path):
+        """Not merely *a* salt: the appended one. Falling back to the
+        placeholder would still pseudonymize, and would still be the bug."""
+        monkeypatch.delenv("TURNAROUND_PSEUDONYM_SALT", raising=False)
+        env = self._example_copy(tmp_path)
+        subprocess.run(SALT_COMMAND, shell=True, cwd=tmp_path, check=True)
+
+        generated = env.read_text().splitlines()[-1].partition("=")[2]
+        load_env(env)
+        assert os.environ["TURNAROUND_PSEUDONYM_SALT"] == generated
+        assert not is_placeholder(generated)
+
+    def test_the_limits_in_the_example_file_reach_the_settings(
+        self, monkeypatch, tmp_path
+    ):
+        """``.env.example`` sets all three with a trailing comment. Reading the
+        file proves nothing; this asserts the numbers arrive."""
+        for key in ("TURNAROUND_ASKS_PER_HOUR", "TURNAROUND_ASKS_PER_DAY",
+                    "TURNAROUND_CONCURRENT_ASKS"):
+            monkeypatch.delenv(key, raising=False)
+        load_env(self._example_copy(tmp_path))
+        cfg = settings()
+        assert (cfg.asks_per_hour, cfg.asks_per_day, cfg.concurrent_asks) == (8, 200, 2)
+
+    def test_an_edited_limit_reaches_the_settings_too(self, monkeypatch, tmp_path):
+        """The values above match the defaults, so they would pass even inert.
+        This is the one that distinguishes 'applied' from 'coincidence'."""
+        monkeypatch.delenv("TURNAROUND_ASKS_PER_DAY", raising=False)
+        env = self._example_copy(tmp_path)
+        env.write_text(env.read_text().replace(
+            "TURNAROUND_ASKS_PER_DAY=200", "TURNAROUND_ASKS_PER_DAY=50"))
+        load_env(env)
+        assert settings().asks_per_day == 50
+
+    def test_no_value_in_the_example_file_keeps_a_stray_hash(self, monkeypatch, tmp_path):
+        """A generalisation of the bug rather than a re-test of it.
+
+        ``KEY=value#comment`` -- no space before the ``#`` -- is a comment to a
+        reader and payload to the parser, and correctly so, because an OTLP
+        base64 header may contain one. That makes it the shape a future line
+        will get wrong silently. Nothing in this file needs it.
+        """
+        # A throwaway copy of the mapping, so `load_env`'s setdefault cannot
+        # leave anything in the real environment for the next test to find.
+        environment: dict[str, str] = {}
+        monkeypatch.setattr(os, "environ", environment)
+        load_env(self._example_copy(tmp_path))
+        assert environment, "nothing parsed out of .env.example"
+        for key, value in environment.items():
+            assert "#" not in value, f"{key} kept a comment: {value!r}"
