@@ -151,9 +151,19 @@ else's bill.
 
 ```bash
 uv sync --group dev
-uv run pytest            # 446 tests, offline: no network, no credentials
+uv run pytest            # the full suite, offline: no network, no credentials
 uv run ruff check .
 ```
+
+See the whole simulated show run, with no accounts and nothing to configure:
+
+```bash
+uv run python -m seed.populate --dry-run
+```
+
+That drives the full write path against in-memory exporters — 200 shots, ~1,450
+spans, ~5,900 metric points — and prints what *would* have been sent. It takes a
+second and nothing leaves the machine. If it prints numbers, your checkout works.
 
 Ask the agent a question (needs a filled-in `.env` — copy `.env.example`; [`docs/SETUP.md`](docs/SETUP.md) walks through Grafana Cloud and Vertex):
 
@@ -162,6 +172,10 @@ uv run python -m seed.populate
 uv run python -m grafana.provision
 uv run python -m agent.run "Why is SEQ0420 slipping, and what is it costing in artist-days?"
 ```
+
+Installed rather than cloned, each of those is a command — `turnaround-seed`,
+`turnaround-provision`, `turnaround-ask`, plus `turnaround-refresh` and
+`turnaround-serve`. They read `.env` from the directory you run them in.
 
 > **Re-seed before any live run.** The show's history is compressed into a
 > ~45-minute window ending at the moment of seeding, and every query reads it

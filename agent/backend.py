@@ -38,6 +38,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -273,12 +274,30 @@ def build(cfg: Settings, *, timeout: float = 6.0,
           query: Callable[[Settings, Tile], list[dict[str, Any]]] | None = None) -> dict[str, Any]:
     """Run every tile on the board once and shape it for the page.
 
+    **Concurrently**, one worker per tile. The tiles are independent -- nine
+    unrelated instant queries against two datasources -- and run in series the
+    board's worst case was `len(BOARD) * timeout`, nearly a minute, spent inside
+    `BoardCache`'s lock with every viewer waiting behind it. One worker each
+    makes the bound the per-tile timeout itself, which is what the cache's
+    docstring always claimed it was.
+
+    Threads rather than async: `_query` is blocking `requests`, and
+    `agent/serve.py` already calls this from FastAPI's threadpool for exactly
+    that reason.
+
     A tile that fails carries its own `error` rather than taking the board down
     with it: Loki being slow should not blank the metric tiles beside it.
     """
     if not cfg.grafana_ready:
         raise BackendUnavailable("Grafana is not configured for this deployment")
     run = query or (lambda c, t: _query(c, t, timeout=timeout))
+
+    # Submitted in board order and collected in board order, so the page's
+    # layout does not depend on which datasource answered first.
+    with ThreadPoolExecutor(max_workers=len(BOARD),
+                            thread_name_prefix="turnaround-tile") as pool:
+        pending = {tile: pool.submit(run, cfg, tile) for tile in BOARD}
+
     tiles: list[dict[str, Any]] = []
     failures = 0
     for tile in BOARD:
@@ -291,7 +310,7 @@ def build(cfg: Settings, *, timeout: float = 6.0,
             "kind": tile.kind,
         }
         try:
-            entry.update(_render(tile, run(cfg, tile)))
+            entry.update(_render(tile, pending[tile].result()))
         except BackendUnavailable:
             failures += 1
             entry.update({"value": None, "display": "--", "bars": [],
@@ -320,7 +339,9 @@ class BoardCache:
     moment fire N upstream queries -- precisely the amplification this module
     exists to prevent. Holding it makes "one query per interval" a guarantee
     instead of a typical case. Readers block for as long as Grafana takes, and
-    `build()`'s own timeout bounds that.
+    the per-tile timeout bounds that -- `build()` runs the whole board
+    concurrently, so the wait is one tile's timeout rather than nine of them end
+    to end, which is what makes holding the lock defensible at all.
 
     On failure the last good board is served with `stale: true`. A judge
     refreshing during a Grafana blip should see a number and a caveat, not an

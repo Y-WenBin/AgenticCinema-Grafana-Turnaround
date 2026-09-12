@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from agent import timeline as timeline_mod
-from agent.approval import WRITE_TOOLS
+from agent.approval import READ_TOOLS, WRITE_TOOLS, ApprovalGate, AutoApprover
 from agent.mcp_grafana import (
     CRUNCH_TOOLS,
     FARM_TOOLS,
@@ -42,11 +42,47 @@ def test_every_tool_an_agent_may_call_is_recognised_as_a_grafana_call():
     )
 
 
+def _gate():
+    return ApprovalGate(approver=AutoApprover(approve=False))
+
+
+def _blocked(name: str) -> bool:
+    """Whether the gate would stop a call to a tool of this name."""
+    tool = type("T", (), {"name": name})()
+    return _gate().before_tool(tool, {}) is not None
+
+
 def test_every_write_tool_the_remediator_has_is_gated():
-    """A write tool outside ``WRITE_TOOLS`` passes ``before_tool`` untouched --
-    it would mutate Grafana with no human in the loop."""
-    ungated = sorted(set(REMEDIATOR_WRITE_TOOLS) - WRITE_TOOLS)
+    """Asserted through `before_tool` itself rather than against `WRITE_TOOLS`.
+    The old version compared two lists, which proved the lists agreed and not
+    that the gate consulted them."""
+    ungated = sorted(name for name in REMEDIATOR_WRITE_TOOLS if not _blocked(name))
     assert not ungated, f"{ungated} can be called without passing the approval gate"
+
+
+def test_a_tool_nobody_has_heard_of_is_gated():
+    """Deny by default. This is the case the old blocklist got wrong: a write
+    tool `mcp-grafana` adds later, or a rename of one already listed, used to
+    pass straight through to a studio's data with no human in the loop."""
+    for unknown in ("delete_annotation", "annotations_create", "update_dashboard",
+                    "kitsu_write_back", "something_invented_next_year"):
+        assert _blocked(unknown), f"{unknown} reached the tool untouched"
+
+
+def test_every_tool_an_analyst_is_wired_to_is_a_recognised_read():
+    """The other half of the allowlist's contract. `READ_TOOLS` lives with the
+    gate and the filters live with the transport; if they drift, the gate starts
+    asking a supervisor to approve `query_prometheus`."""
+    unrecognised = sorted(ALL_ANALYST_TOOLS - READ_TOOLS)
+    assert not unrecognised, (
+        f"{unrecognised} are handed to an analyst but are not in "
+        "agent/approval.py's READ_TOOLS, so the gate would prompt on a read"
+    )
+
+
+def test_no_write_tool_is_listed_as_a_read():
+    """The one way the allowlist could be got wrong in the dangerous direction."""
+    assert not (READ_TOOLS & WRITE_TOOLS)
 
 
 def test_no_analyst_can_reach_a_write_tool():

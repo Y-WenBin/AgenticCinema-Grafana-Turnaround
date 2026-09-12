@@ -322,3 +322,65 @@ def test_the_page_shows_the_query_beside_the_number():
     different claims, and only the second one is checkable by a judge."""
     assert "qBody" in PAGE
     assert "t.query" in PAGE
+
+
+# --------------------------------------------------------------------------- #
+# The board is built concurrently
+# --------------------------------------------------------------------------- #
+
+
+def test_the_board_queries_every_tile_at_once_not_one_after_another():
+    """Nine independent instant queries run in series made the board's worst
+    case `len(BOARD) * timeout` -- nearly a minute -- spent inside BoardCache's
+    lock with every viewer queued behind it. Timed rather than asserted on the
+    implementation: what matters is the wall clock a reader waits."""
+    import time as _time
+
+    delay = 0.05
+
+    def slow(_cfg, _tile):
+        _time.sleep(delay)
+        return [{"value": [0, "1"]}]
+
+    started = _time.monotonic()
+    board = backend.build(CFG, query=slow)
+    elapsed = _time.monotonic() - started
+
+    assert len(board["tiles"]) == len(backend.BOARD)
+    serial = delay * len(backend.BOARD)
+    assert elapsed < serial / 2, (
+        f"{elapsed:.2f}s for {len(backend.BOARD)} tiles that sleep {delay}s each "
+        f"-- serial would be {serial:.2f}s, so these did not run concurrently"
+    )
+
+
+def test_tiles_stay_in_board_order_however_fast_each_one_answers():
+    """Concurrency must not reorder the page. The first tile to answer is
+    whichever datasource happened to be warm, which is not a layout."""
+    import time as _time
+
+    order = {tile.key: i for i, tile in enumerate(backend.BOARD)}
+
+    def staggered(_cfg, tile):
+        # deliberately inverted: the last tile answers first
+        _time.sleep(0.001 * (len(backend.BOARD) - order[tile.key]))
+        return [{"value": [0, "1"]}]
+
+    board = backend.build(CFG, query=staggered)
+    assert [t["key"] for t in board["tiles"]] == [t.key for t in backend.BOARD]
+
+
+def test_one_slow_tile_does_not_take_the_others_down():
+    """Per-tile isolation has to survive the move to threads: a failure in one
+    worker is that tile's `error`, not an exception out of `build`."""
+    def flaky(_cfg, tile):
+        if tile.source == "loki":
+            raise backend.BackendUnavailable("loki is having a moment")
+        return [{"value": [0, "42"]}]
+
+    board = backend.build(CFG, query=flaky)
+    by_source = {}
+    for tile in board["tiles"]:
+        by_source.setdefault(tile["source"], []).append(tile)
+    assert all(t.get("error") == "unavailable" for t in by_source["loki"])
+    assert all("error" not in t for t in by_source["prom"])

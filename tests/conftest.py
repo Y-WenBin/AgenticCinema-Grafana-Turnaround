@@ -64,7 +64,15 @@ def _no_real_dotenv(monkeypatch, tmp_path):
     was no longer the global it resolved against, and five tests in three files
     started reading real credentials. One autouse fixture in one place, so there
     is no second module that has to remember.
+
+    ``env_path`` is patched as well as ``REPO_ROOT``, and it is now the one that
+    matters: the search walks up from the *working directory* so that an
+    installed copy can find the user's ``.env``, and pytest's working directory
+    is the repo -- so without this the suite would read the developer's real
+    credentials from the very first candidate it tried. ``REPO_ROOT`` stays
+    patched because other things resolve against it (``CLOUD_MCP_TOKEN_FILE``).
     """
     from bridge import dotenv
 
     monkeypatch.setattr(dotenv, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(dotenv, "env_path", lambda: tmp_path / ".env")

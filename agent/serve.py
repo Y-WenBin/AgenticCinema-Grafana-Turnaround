@@ -26,6 +26,7 @@ This module is the *JSON presentation* of a run. The run itself is
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
@@ -69,7 +70,23 @@ app = FastAPI(
     openapi_url="/openapi.json" if _DOCS else None,
 )
 
-WEB = REPO_ROOT / "web"
+def _web_root() -> Path:
+    """Where the playground's files live, in a checkout *and* in a wheel.
+
+    ``web/`` sits at the repo root because that is what it is -- the page this
+    service serves, not part of the agent package. A wheel has no repo root, so
+    the build copies it to ``agent/_web`` (see the ``force-include`` in
+    pyproject.toml) and this looks there second. Without the fallback an
+    installed copy answered ``/app.js`` and ``/favicon.svg`` with a 500, because
+    ``REPO_ROOT`` resolves to site-packages once the code is not run from source.
+    """
+    checkout = REPO_ROOT / "web"
+    if (checkout / "index.html").is_file():
+        return checkout
+    return Path(__file__).resolve().parent / "_web"
+
+
+WEB = _web_root()
 
 # --------------------------------------------------------------------------- #
 # Security headers

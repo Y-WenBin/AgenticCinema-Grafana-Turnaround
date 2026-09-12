@@ -22,6 +22,8 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 
+from bridge.startup import ConfigError, is_placeholder
+
 #: Minimum number of distinct people behind any crew-load figure.
 #: Below this, an "overloaded pool" alert is really an alert about one person.
 MIN_POOL_SIZE = 3
@@ -34,13 +36,27 @@ class PrivacyViolation(RuntimeError):
     """Raised when data that could identify an individual reaches an exporter."""
 
 
+class MissingSalt(PrivacyViolation, ConfigError):
+    """The pseudonym salt is unset or still example text.
+
+    Both parents are load-bearing. It is a `PrivacyViolation` because refusing
+    to emit is a privacy decision, and callers that already guard on that keep
+    working. It is also a `ConfigError` because, unlike every other
+    `PrivacyViolation`, the cause is a line nobody filled in rather than a leak
+    -- which lets `bridge.startup.reporting` turn it into one sentence at an
+    entry point without also swallowing a real `assert_no_pii` failure.
+    """
+
+
 def _salt() -> bytes:
-    salt = os.environ.get(_SALT_ENV)
-    if not salt or salt == "change-me":
-        raise PrivacyViolation(
+    salt = (os.environ.get(_SALT_ENV) or "").strip()
+    if not salt or is_placeholder(salt):
+        raise MissingSalt(
             f"{_SALT_ENV} is unset or still the placeholder. Refusing to emit "
             "artist telemetry with a guessable pseudonym salt: without a real "
-            "salt the pseudonyms are reversible by anyone who can list the crew."
+            "salt the pseudonyms are reversible by anyone who can list the crew.\n"
+            "  generate one and append it to .env:\n"
+            f'    echo "{_SALT_ENV}=$(openssl rand -hex 16)" >> .env'
         )
     return salt.encode()
 

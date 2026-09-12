@@ -16,6 +16,7 @@ about the run escapes.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from agent.approval import Approver
 from agent.config import Settings, bootstrap_vertex
 from agent.mcp_grafana import HostedMcpNotAuthorized
 from agent.producer import AgentSystem, build_system
+from bridge.startup import ConfigError, require
 
 if TYPE_CHECKING:
     from agent.evaluation import Scorecard
@@ -39,8 +41,13 @@ if TYPE_CHECKING:
 APP = "turnaround"
 
 
-class NotConfigured(RuntimeError):
-    """Startup validation failed: the message names the missing keys."""
+class NotConfigured(ConfigError):
+    """Startup validation failed: the message names the missing keys.
+
+    A :class:`~bridge.startup.ConfigError` so that every entry point reports a
+    half-filled ``.env`` the same way, whether the missing line stops the
+    seeder, the provisioner or the agent.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,13 +128,19 @@ def judge_generator(enabled: bool, model: str,
 def resolved_settings() -> Settings:
     """Vertex-bootstrapped settings, or :class:`NotConfigured` naming what is missing."""
     cfg = bootstrap_vertex()
-    missing = []
-    if not cfg.vertex_ready:
-        missing.append("GOOGLE_CLOUD_PROJECT")
-    if not cfg.grafana_ready:
-        missing.append("GRAFANA_URL / GRAFANA_SERVICE_ACCOUNT_TOKEN")
-    if missing:
-        raise NotConfigured(f"unset: {', '.join(missing)} -- fill in .env (see .env.example).")
+    # Named one key at a time rather than as a slash-joined pair: "GRAFANA_URL /
+    # GRAFANA_SERVICE_ACCOUNT_TOKEN" left a reader checking a line that was
+    # already correct. `Settings` has already erased any value still holding
+    # `.env.example` text (`bridge.startup.real`), so a placeholder reaches this
+    # check as unset -- which is the whole point.
+    try:
+        require(
+            GOOGLE_CLOUD_PROJECT=cfg.gcp_project,
+            GRAFANA_URL=cfg.grafana_url,
+            GRAFANA_SERVICE_ACCOUNT_TOKEN=cfg.grafana_token,
+        )
+    except ConfigError as exc:
+        raise NotConfigured(str(exc)) from None
     return cfg
 
 
@@ -157,6 +170,33 @@ async def answer_question(
                                   session_id=conversation_id)
     runner = Runner(app_name=APP, agent=system.producer, session_service=sessions,
                     plugins=[obs.plugin] if obs is not None else None)
+    try:
+        return await _run(question, runner=runner, system=system, obs=obs, cfg=cfg,
+                          conversation_id=conversation_id, evaluate=evaluate)
+    finally:
+        # Every run owns real OS resources: in OSS mode each of the four
+        # toolsets is an `mcp-grafana` stdio subprocess, and the telemetry trio
+        # carries a batch processor thread per signal. Nothing releases either
+        # on its own -- ADK frees toolsets only from `Runner.close()`, which
+        # `run_async` never calls. A CLI run hides that (the process exits);
+        # `agent/serve.py` builds a fresh system per request, so without this
+        # the instance accumulates subprocesses and threads until it dies.
+        await _release(runner, obs)
+
+
+async def _run(
+    question: str,
+    *,
+    runner: Runner,
+    system: AgentSystem,
+    obs,
+    cfg: Settings,
+    conversation_id: str,
+    evaluate: bool,
+) -> RunOutcome:
+    """Drive one run to an outcome. Split from :func:`answer_question` purely so
+    the teardown above is a `finally` over the whole body rather than a block
+    that has to be repeated on each return path."""
 
     # Circuit breaker: a flash analyst stuck re-calling a tool would otherwise
     # burn tokens until ADK's default ceiling of 500 model calls.
@@ -234,6 +274,42 @@ async def answer_question(
             obs.flush()
 
     return outcome
+
+
+#: Ceiling on teardown. ADK already bounds each toolset at 10s, but four
+#: toolsets in series is 40s of a request a caller is still waiting on, and a
+#: wedged subprocess must not hold the response hostage. Past this the leak is
+#: the lesser harm: the process is either exiting (CLI) or will retire the
+#: instance eventually (Cloud Run).
+RELEASE_TIMEOUT = 15.0
+
+
+async def _release(runner: Runner, obs) -> None:
+    """Give back everything the run took: MCP subprocesses, then telemetry.
+
+    Nothing here may raise. The answer has already been produced by the time
+    this runs, and losing it to a cleanup error would be a strictly worse
+    outcome than the leak this exists to prevent -- so every failure is reported
+    to stderr and swallowed.
+
+    Order matters: ``runner.close()`` is what terminates the ``mcp-grafana``
+    subprocesses, and the telemetry providers stay up until after it so a span
+    emitted during teardown still has somewhere to go.
+    """
+    close = getattr(runner, "close", None)
+    if callable(close):
+        try:
+            await asyncio.wait_for(close(), timeout=RELEASE_TIMEOUT)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 -- see docstring (TimeoutError included)
+            print(f"(toolset teardown incomplete: {exc})", file=sys.stderr)
+
+    if obs is not None:
+        try:
+            obs.shutdown()
+        except Exception as exc:  # noqa: BLE001
+            print(f"(telemetry shutdown incomplete: {exc})", file=sys.stderr)
 
 
 def _first_leaf(group: BaseExceptionGroup, kinds: tuple[type, ...]) -> BaseException | None:

@@ -145,7 +145,7 @@ git clone https://github.com/Y-WenBin/AgenticCinema-Grafana-Turnaround.git turna
 cd turnaround
 uv python install 3.12
 uv sync --group dev
-uv run pytest -q            # 446 pass, no credentials needed — proves the checkout
+uv run pytest -q            # all green, no credentials needed — proves the checkout
 uv run ruff check .
 
 # mcp-grafana (the agent's tool server). Any one of:
@@ -156,6 +156,29 @@ go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@v1.3.0
 
 Turnaround auto-finds `mcp-grafana` on `PATH` or in `/opt/homebrew/bin`,
 `/usr/local/bin`, `~/go/bin`; otherwise set `TURNAROUND_MCP_GRAFANA_BIN`.
+
+**Check it works before you have any accounts.** This runs the whole simulated
+show through the real write path against in-memory exporters — no Grafana, no
+Vertex, no network:
+
+```bash
+uv run python -m seed.populate --dry-run   # prints the show, ends "nothing left this machine"
+```
+
+**Installing instead of cloning?** `uv tool install turnaround` (or `pip install`)
+gives you the same five steps as commands, which read `.env` from the directory
+you run them in:
+
+| Command | Same as |
+|---|---|
+| `turnaround-seed` | `python -m seed.populate` |
+| `turnaround-refresh` | `python -m seed.refresh` |
+| `turnaround-provision` | `python -m grafana.provision` |
+| `turnaround-ask` | `python -m agent.run` |
+| `turnaround-serve` | `python -m agent.serve` |
+
+The rest of this guide uses the `python -m` form, since it works from a checkout
+either way.
 
 ---
 

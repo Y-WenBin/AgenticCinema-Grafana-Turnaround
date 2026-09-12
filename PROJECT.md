@@ -18,7 +18,7 @@ record — including every bug found on the way — is
 
 **Status.** Data plane, dashboards/alerts/ML, the agent tier, the EvalOps tier
 and the deploy scaffolding are complete and tested. All four representative
-questions are verified cold against the live stack. **446 tests**, offline; `ruff` clean. The
+questions are verified cold against the live stack. The suite runs **offline**; `ruff` clean. The
 Cloud Run *deploy run* and a live Kitsu/OpenCue instance are the two open items
 (see [Roadmap](#roadmap)). Runs against a Grafana Cloud stack and a Vertex AI
 project you supply (`docs/SETUP.md`); the model is `gemini-2.5-flash`.
@@ -394,7 +394,7 @@ punchline. The real story is stronger.
 ```bash
 uv sync --group dev
 brew install mcp-grafana                 # 1.3.0; the agent tier needs it
-uv run pytest -q                         # 446 tests, offline, no credentials
+uv run pytest -q                         # the full suite, offline, no credentials
 uv run ruff check .
 ```
 

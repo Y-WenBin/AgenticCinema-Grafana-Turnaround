@@ -23,6 +23,7 @@ from pathlib import Path
 
 from bridge.dotenv import REPO_ROOT
 from bridge.dotenv import load_env as _load_env
+from bridge.startup import real
 
 # --------------------------------------------------------------------------- #
 # .env loading -- stdlib only, real environment always wins
@@ -207,19 +208,23 @@ def settings() -> Settings:
     ``os.environ``, from anywhere in ``agent/``."""
     load_env()
     mode = os.environ.get("TURNAROUND_MCP_MODE", "oss").strip().lower()
+    # `real()` erases a value that is still `.env.example` text, so the
+    # emptiness checks on `Settings` -- and the `NotConfigured` they raise --
+    # fire on a copied-but-unedited `.env` instead of letting the run proceed
+    # to an SSL handshake against the URL-encoded placeholder. See bridge/startup.
     return Settings(
-        grafana_url=os.environ.get("GRAFANA_URL", "").rstrip("/"),
-        grafana_token=os.environ.get("GRAFANA_SERVICE_ACCOUNT_TOKEN", ""),
-        gcp_project=os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
-        gcp_location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"),
+        grafana_url=real(os.environ.get("GRAFANA_URL")).rstrip("/"),
+        grafana_token=real(os.environ.get("GRAFANA_SERVICE_ACCOUNT_TOKEN")),
+        gcp_project=real(os.environ.get("GOOGLE_CLOUD_PROJECT")),
+        gcp_location=real(os.environ.get("GOOGLE_CLOUD_LOCATION")) or "us-central1",
         mcp_grafana_bin=_find_mcp_grafana(),
         mcp_mode="hosted" if mode == "hosted" else "oss",
-        grafana_cloud_mcp_token=os.environ.get("GRAFANA_CLOUD_MCP_TOKEN", "")
+        grafana_cloud_mcp_token=real(os.environ.get("GRAFANA_CLOUD_MCP_TOKEN"))
         or _read_token_file(),
-        ds_prom=os.environ.get("GRAFANA_DS_PROM_UID", "grafanacloud-prom"),
-        ds_loki=os.environ.get("GRAFANA_DS_LOKI_UID", "grafanacloud-logs"),
-        ds_tempo=os.environ.get("GRAFANA_DS_TEMPO_UID", "grafanacloud-traces"),
-        analyst_model=os.environ.get("TURNAROUND_GEMINI_MODEL", "").strip()
+        ds_prom=real(os.environ.get("GRAFANA_DS_PROM_UID")) or "grafanacloud-prom",
+        ds_loki=real(os.environ.get("GRAFANA_DS_LOKI_UID")) or "grafanacloud-logs",
+        ds_tempo=real(os.environ.get("GRAFANA_DS_TEMPO_UID")) or "grafanacloud-traces",
+        analyst_model=real(os.environ.get("TURNAROUND_GEMINI_MODEL"))
         or DEFAULT_ANALYST_MODEL,
         max_llm_calls=_int_env("TURNAROUND_MAX_LLM_CALLS", DEFAULT_MAX_LLM_CALLS),
         asks_per_hour=_int_env("TURNAROUND_ASKS_PER_HOUR", DEFAULT_ASKS_PER_HOUR),

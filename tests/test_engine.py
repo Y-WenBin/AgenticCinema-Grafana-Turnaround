@@ -13,10 +13,12 @@ replaced with a stub that yields a scripted final event.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 
 import pytest
 from fastapi.testclient import TestClient
+from google.adk.agents.invocation_context import LlmCallsLimitExceededError
 
 from agent import engine
 from agent import run as run_mod
@@ -53,12 +55,27 @@ class _FinalEvent:
     def is_final_response(self): return True
 
 
+class _StubRunner:
+    """Base for the ADK Runner stand-ins.
+
+    Counts `close()` because that is the call that terminates the `mcp-grafana`
+    subprocesses -- a stub without it would let the leak back in silently.
+    """
+
+    closes = 0
+
+    def __init__(self, **_kw):
+        pass
+
+    async def close(self):
+        type(self).closes += 1
+
+
 def _runner_yielding(text: str):
     """A stand-in ADK Runner that emits one final response and nothing else."""
 
-    class _Runner:
-        def __init__(self, **_kw):
-            pass
+    class _Runner(_StubRunner):
+        closes = 0
 
         async def run_async(self, **_kw):
             yield _FinalEvent(text)
@@ -67,9 +84,8 @@ def _runner_yielding(text: str):
 
 
 def _runner_raising(exc: Exception):
-    class _Runner:
-        def __init__(self, **_kw):
-            pass
+    class _Runner(_StubRunner):
+        closes = 0
 
         async def run_async(self, **_kw):
             if False:  # pragma: no cover -- makes this an async generator
@@ -169,10 +185,7 @@ def test_the_circuit_breaker_is_an_outcome_field_not_an_exception(offline):
 def test_the_ceiling_passed_to_adk_is_the_resolved_one(offline):
     seen = {}
 
-    class _Runner:
-        def __init__(self, **_kw):
-            pass
-
+    class _Runner(_StubRunner):
         async def run_async(self, **kw):
             seen["ceiling"] = kw["run_config"].max_llm_calls
             yield _FinalEvent(ANSWER)
@@ -237,10 +250,7 @@ def test_cli_still_shows_a_partial_answer_when_the_breaker_trips(offline, capsys
     the note goes to stderr and the exit stays 0."""
     from google.adk.agents.invocation_context import LlmCallsLimitExceededError
 
-    class _Runner:
-        def __init__(self, **_kw):
-            pass
-
+    class _Runner(_StubRunner):
         async def run_async(self, **_kw):
             yield _FinalEvent(ANSWER)
             raise LlmCallsLimitExceededError("boom")
@@ -653,3 +663,110 @@ def test_the_endpoint_names_the_halt_instead_of_returning_a_blank_answer(offline
     assert body["halted_by"] == "model_quota"
     assert "quota exhausted" in body["halt_detail"]
     assert body["circuit_breaker_tripped"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Teardown: a run must give back the OS resources it took
+# --------------------------------------------------------------------------- #
+
+
+def test_a_completed_run_closes_the_runner(offline):
+    """`Runner.close()` is the only thing in ADK that terminates the four
+    `mcp-grafana` subprocesses a run spawns -- `run_async` never calls it. The
+    HTTP front end builds a fresh system per request, so a missed close is a
+    subprocess leak per `/ask`."""
+    runner_cls = engine.Runner
+    asyncio.run(engine.answer_question(
+        "q", approver=AutoApprover(approve=False), conversation_id="t",
+        observability=False, evaluate=False))
+    assert runner_cls.closes == 1
+
+
+def test_a_halted_run_closes_the_runner_too(offline):
+    """The failure path is the one that matters: a Vertex quota refusal that
+    leaked its subprocess would bleed capacity fastest, because it is the
+    failure most likely to repeat."""
+    offline.setattr(engine, "Runner", _runner_raising(LlmCallsLimitExceededError("boom")))
+    asyncio.run(engine.answer_question(
+        "q", approver=AutoApprover(approve=False), conversation_id="t",
+        observability=False, evaluate=False))
+    assert engine.Runner.closes == 1
+
+
+def test_an_unexpected_exception_still_closes_the_runner(offline):
+    """Teardown is a `finally`, not a happy-path step: an error the engine does
+    not model still has to give the subprocesses back before it propagates."""
+    offline.setattr(engine, "Runner", _runner_raising(RuntimeError("unmodelled")))
+    with pytest.raises(RuntimeError):
+        asyncio.run(engine.answer_question(
+            "q", approver=AutoApprover(approve=False), conversation_id="t",
+            observability=False, evaluate=False))
+    assert engine.Runner.closes == 1
+
+
+def test_a_run_shuts_the_telemetry_down_not_just_flushes_it(offline):
+    """Each run builds its own tracer/logger/meter trio, and each carries a
+    batch-processor thread. `flush()` empties them; only `shutdown()` stops the
+    threads, so flushing alone leaks one thread per signal per request."""
+    calls = []
+
+    class _Telemetry:
+        @contextlib.contextmanager
+        def invoke_agent(self, *_a, **_k):
+            yield
+
+    class _Obs:
+        plugin = type("P", (), {"last_response_id": None})()
+        telemetry = _Telemetry()
+
+        def flush(self, *_a, **_k):
+            calls.append("flush")
+
+        def shutdown(self):
+            calls.append("shutdown")
+
+    offline.setattr(engine, "instrumentation", lambda _enabled: _Obs())
+    asyncio.run(engine.answer_question(
+        "q", approver=AutoApprover(approve=False), conversation_id="t",
+        observability=True, evaluate=False))
+    assert calls[-1] == "shutdown"
+
+
+def test_a_failing_teardown_does_not_cost_the_answer(offline, capsys):
+    """The answer is already produced by the time teardown runs. Losing it to a
+    wedged subprocess would be strictly worse than the leak, so `_release`
+    reports and swallows."""
+
+    class _Runner(_StubRunner):
+        async def run_async(self, **_kw):
+            yield _FinalEvent(ANSWER)
+
+        async def close(self):
+            raise OSError("the subprocess is already gone")
+
+    offline.setattr(engine, "Runner", _Runner)
+    outcome = asyncio.run(engine.answer_question(
+        "q", approver=AutoApprover(approve=False), conversation_id="t",
+        observability=False, evaluate=False))
+    assert outcome.answer.startswith("Answer: SEQ0420")
+    assert "teardown incomplete" in capsys.readouterr().err
+
+
+def test_teardown_is_bounded_so_a_wedged_subprocess_cannot_hold_the_response(offline, capsys):
+    """ADK bounds each toolset at 10s; four in series is 40s a caller waits
+    through after their answer is ready. `RELEASE_TIMEOUT` caps the whole thing."""
+
+    class _Runner(_StubRunner):
+        async def run_async(self, **_kw):
+            yield _FinalEvent(ANSWER)
+
+        async def close(self):
+            await asyncio.sleep(60)
+
+    offline.setattr(engine, "Runner", _Runner)
+    offline.setattr(engine, "RELEASE_TIMEOUT", 0.05)
+    outcome = asyncio.run(engine.answer_question(
+        "q", approver=AutoApprover(approve=False), conversation_id="t",
+        observability=False, evaluate=False))
+    assert outcome.answer.startswith("Answer: SEQ0420")
+    assert "teardown incomplete" in capsys.readouterr().err

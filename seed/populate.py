@@ -21,6 +21,7 @@ from bridge.dotenv import load_env
 from bridge.emit import Emitter
 from bridge.metrics import MetricBackfill, Point
 from bridge.ontology import Attr, Department, Metric, TaskStatus
+from bridge.startup import reporting
 from seed.model import ProductionHistory, ShowSimulation
 
 WORKWEEK_HOURS = 40.0
@@ -229,6 +230,15 @@ def summarise(history: ProductionHistory) -> str:
 
 
 def main() -> None:
+    """Entry point. Thin on purpose: everything that can fail on a half-filled
+    ``.env`` happens inside :func:`reporting`, which turns the one failure a
+    first-time user actually hits -- an unset pseudonym salt -- into a sentence
+    and exit 2 instead of a twenty-line traceback out of `hmac.new`."""
+    with reporting():
+        _populate()
+
+
+def _populate() -> None:
     # Load `.env` first, so this entry point needs no `set -a && source .env`
     # incantation. A real exported variable still wins (bridge/dotenv.py).
     load_env()
