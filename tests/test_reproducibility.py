@@ -11,6 +11,10 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import os
+import re
+import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -373,11 +377,7 @@ def test_startup_refuses_incomplete_config(monkeypatch, over):
 
 
 def test_the_repo_is_usable_by_someone_who_just_cloned_it():
-    """An OSS licence and init instructions that actually run.
-
-    The failure this guards against is quiet: a README whose quickstart drifted
-    away from the commands that work, found by the one person least equipped to
-    debug it -- someone seeing the project for the first time."""
+    """An OSS licence, and a README that still offers the commands that exist."""
     licence = (REPO / "LICENSE").read_text()
     assert "Apache License" in licence and "Version 2.0" in licence
 
@@ -386,3 +386,96 @@ def test_the_repo_is_usable_by_someone_who_just_cloned_it():
 
     readme = (REPO / "README.md").read_text()
     assert "uv sync" in readme and "uv run pytest" in readme
+
+
+def _unconfigured_env(tmp_path: Path) -> dict[str, str]:
+    """The environment of someone who has just run ``cp .env.example .env``.
+
+    These two tests run the seeder in a *subprocess*, which walks straight past
+    the autouse fixture that keeps the rest of the suite away from a developer's
+    ``.env`` -- and `bridge.dotenv.env_path` falls back to ``REPO_ROOT/.env``, so
+    a subprocess started anywhere on this machine still finds the real one. The
+    first draft of these tests passed for exactly that reason.
+
+    Two locks, because one is not enough. An empty ``.env`` in `tmp_path` is
+    found before the fallback is ever reached, so no real file is read; and the
+    salt is exported explicitly, which beats any ``.env`` outright
+    (`bridge/dotenv.py` never overwrites a real variable). The placeholder value
+    is the point rather than an absent one: it is what `cp .env.example .env`
+    leaves behind, and far more people hit that state than run the seeder with
+    no ``.env`` at all.
+    """
+    (tmp_path / ".env").write_text("")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("TURNAROUND_")}
+    env["PYTHONPATH"] = str(REPO)
+    env["TURNAROUND_PSEUDONYM_SALT"] = "change-me"
+    return env
+
+
+def test_the_zero_config_command_the_readme_offers_actually_runs(tmp_path):
+    """The README's first command, run the way a new user runs it: no ``.env``.
+
+    This used to be a substring check -- it asserted that the strings "uv sync"
+    and "uv run pytest" appeared somewhere in the README, and called that
+    guarding the quickstart. It passed continuously while the command the README
+    offers twice as needing "no accounts and nothing configured" exited 2 on a
+    missing salt. A test that greps for the documentation of a command does not
+    know whether the command works.
+
+    So this one runs it, from a directory with no ``.env`` in it or above it, and
+    checks the sentinel the seeder prints when the whole path completed. `cwd` is
+    `tmp_path` for the same reason the wheel job installs outside the repo: run
+    from the checkout it would find the developer's own ``.env`` and prove
+    nothing.
+    """
+    env = _unconfigured_env(tmp_path)
+    proc = subprocess.run(
+        [sys.executable, "-m", "seed.populate", "--dry-run"],
+        cwd=tmp_path, env=env, capture_output=True, text=True,
+        timeout=300, check=False,
+    )
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    assert "dry run: nothing left this machine" in proc.stdout
+    # Borrowing a salt has to be visible, or a passing dry run reads as proof
+    # that a real run is configured.
+    assert "throwaway" in proc.stdout
+
+
+def test_a_real_seed_still_refuses_to_run_without_a_salt(tmp_path):
+    """The other half of the pair. Only ``--dry-run`` may borrow a salt.
+
+    Without this, the fix above is one dropped conditional away from silently
+    pseudonymising real artists with a salt that dies with the process -- which
+    would export unjoinable labels and destroy the audit trail, quietly.
+    """
+    env = _unconfigured_env(tmp_path)
+    proc = subprocess.run(
+        [sys.executable, "-m", "seed.populate"],
+        cwd=tmp_path, env=env, capture_output=True, text=True,
+        timeout=300, check=False,
+    )
+    assert proc.returncode == 2
+    assert "TURNAROUND_PSEUDONYM_SALT" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_every_ci_action_is_pinned_to_something_that_resolves():
+    """A workflow that names a tag nobody publishes never runs at all.
+
+    ``astral-sh/setup-uv@v10`` was unresolvable -- that action stopped publishing
+    moving major tags after v7 -- so all three jobs died at "Set up job" and CI
+    was red, and empty, from the day it was added. The suite cannot ask GitHub
+    whether a tag exists (it is offline by contract, tests/TESTPLAN.md), so it
+    checks the property that made the reference safe to trust: an exact release.
+    """
+    workflow = (REPO / ".github/workflows/ci.yml").read_text()
+    refs = re.findall(r"uses:\s*(\S+)", workflow)
+    assert refs, "no actions found; did the workflow move?"
+    for ref in refs:
+        action, _, version = ref.partition("@")
+        assert version, f"{action} is unpinned"
+        if action.startswith("astral-sh/"):
+            assert re.fullmatch(r"v\d+\.\d+\.\d+", version), (
+                f"{ref} must pin an exact release: astral-sh publishes no "
+                f"moving major tag above v7, so a bare major resolves to nothing"
+            )

@@ -24,6 +24,7 @@ here are true as of their date and are not retro-edited.
 | 2026-09-10 | [The front door was a 404, and I had already seen it](#2026-09-10--the-front-door-was-a-404-and-i-had-already-seen-it) |
 | 2026-09-10 | [Something to try, and a budget that survives it](#2026-09-10--something-to-try-and-a-budget-that-survives-it) |
 | 2026-09-13 | [The demo moves out](#2026-09-13--the-demo-moves-out) |
+| 2026-09-13 | [The first command a new user runs](#2026-09-13--the-first-command-a-new-user-runs) |
 
 ---
 
@@ -576,3 +577,101 @@ measure of how much of the old suite was exercising the demo rather than the
 product.
 
 510 tests.
+
+---
+
+## 2026-09-13 — the first command a new user runs
+
+A review of the merged repository from a clean clone, taking the README at its
+word and running only what it offers.
+
+**CI had never run. Not once.** `astral-sh/setup-uv@v10` does not exist: that
+action publishes moving major tags up to `v7` and exact releases above it, so
+`@v10` resolved to nothing and all three jobs died at "Set up job" in two
+seconds. Every run since the workflow was added was red, and none of them had
+executed a single test. The workflow that exists to prove the suite runs was the
+one thing nobody had checked ran. Pinned to `v10.1.0`, and
+`test_every_ci_action_is_pinned_to_something_that_resolves` now asserts the
+property offline — `astral-sh/*` must carry an exact release — because the suite
+cannot ask GitHub whether a tag exists.
+
+**The README's headline promise was false.** It offers
+`python -m seed.populate --dry-run` twice as the thing that "needs no accounts
+and nothing configured". It exited 2 on an unset pseudonym salt. That was the
+first command a new user ran, and it failed.
+
+The gate was right in general and wrong here. A guessable salt matters because it
+makes pseudonyms reversible to anyone holding a crew list — which requires the
+pseudonyms to *leave*. A dry run writes to in-memory exporters and prints
+"nothing left this machine". `install_ephemeral_salt` gives that run a random
+16-byte salt, which is stronger than a configured one rather than weaker: it is
+unguessable and it does not outlive the process. It is announced, not silent,
+or a passing dry run would read as proof that a real `.env` is filled in. The
+exporting path still fails closed, and a second test pins that down — a real
+seed's pseudonyms have to stay stable across seeds to be joinable at all.
+
+**CI could not have caught it, because CI tested the workaround.** The wheel
+job writes a salt of its own before running the same command. It proved the
+seeder works when configured, which was never in doubt.
+
+**Neither could the test that existed to catch it.** 
+`test_the_repo_is_usable_by_someone_who_just_cloned_it` said it guarded against
+"a README whose quickstart drifted away from the commands that work". What it
+did was assert that the strings `uv sync` and `uv run pytest` appear somewhere in
+the README. It passed continuously while the documented command exited 2. A test
+that greps for the documentation of a command knows nothing about the command.
+It now runs it, in a subprocess, from a directory with no usable `.env`.
+
+Getting that test honest took two tries, which is itself the finding. The first
+draft deleted `TURNAROUND_*` from the environment and passed — for the wrong
+reason. A subprocess walks straight past the autouse fixture that keeps the
+suite away from a developer's `.env`, and `env_path` falls back to
+`REPO_ROOT/.env`, so it had found the real one. It now writes an empty `.env`
+in `tmp_path` (found before the fallback is reached) *and* exports the
+placeholder salt, which beats any file outright.
+
+**`turnaround-refresh` hung, and lied about why.** Run unconfigured it printed
+`FAILED: simulating the show...` and then sat there. Two faults, compounding:
+
+- `_seed` built its report from the last line of *stdout* whenever stdout was
+  non-empty, falling back to stderr only if it was empty. `seed.populate` prints
+  "simulating the show..." before anything can fail, so stdout was never empty
+  and stderr was never shown. Every failure reported the one step that worked,
+  and the sentence naming the unset variable — ending in the command that fixes
+  it — was discarded.
+- `main` then slept fifteen minutes and tried again, forever. Every failure this
+  command actually meets is a standing one; an unset salt does not heal on a
+  timer. It now exits 1 if the *first* seed fails, and keeps retrying after that,
+  where a failure really is transient.
+
+`seed/refresh.py` had no behavioural test at all — only a check that its entry
+point exists. It has three now. Its docstring also still pointed at `deploy/`,
+which left in the split; so did a docstring in `tests/test_config.py`.
+
+**A test that failed about one run in ten, and the bug underneath it.**
+`test_plugin_builds_a_nested_trace_from_adk_callbacks` failed on a fresh clone,
+passed in isolation, and passed twenty times in a row afterwards. That shape --
+intermittent, order-independent, unreproducible on demand -- is what a dangling
+`id()` looks like from the outside.
+
+`observability/adk.py` keyed open `execute_tool` spans on `id(tool_context)`
+while deliberately holding no reference to the context. The object is freed the
+moment `before_tool_callback` returns, and the lookup in `after_tool_callback`
+worked only because CPython usually hands the next object the address it just
+freed. Measured: the address is reused 1000/1000 times when nothing else is
+allocated in between, and never when three objects are. So every test of this
+path had been passing for a reason unrelated to the code being correct.
+
+The consequence in production is worse than a flaky test: a missed lookup means
+the span is never closed, so it never reaches the exporter and never appears in
+Tempo. The evidence chain the whole product is built on would have had holes in
+it, silently, under memory pressure. And a freed address can be reissued to an
+unrelated object, which turns the miss into a hit that closes the wrong span.
+
+Now keyed on ADK's `function_call_id` -- already read three lines above the
+store, and an identity the plugin is actually entitled to keep. The two new
+tests hold the first context alive, so the address cannot be recycled and the
+old keying fails deterministically rather than one run in ten. 25 consecutive
+full runs, clean.
+
+518 tests.

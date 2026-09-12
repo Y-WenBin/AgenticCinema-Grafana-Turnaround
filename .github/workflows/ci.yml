@@ -45,7 +45,12 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10
+        # Pinned to an exact release, not `@v10`: astral-sh/setup-uv stopped
+        # publishing moving major tags after v7, so `@v10` resolved to nothing
+        # and every job died at "Set up job" before a single test ran. This
+        # workflow was red from the day it was added and had never once
+        # executed the suite it exists to guard.
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -68,7 +73,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -104,23 +109,34 @@ jobs:
 
       - name: An installed copy runs the whole simulation offline
         # The end-to-end proof, and the one command a new user can run before
-        # they have a Grafana Cloud account or a GCP project. `.env` is written
-        # in the working directory, which is nowhere near the installed package
-        # -- that is the discovery path `bridge/dotenv.py::env_path` exists for.
+        # they have a Grafana Cloud account or a GCP project -- so it runs with
+        # no `.env` at all, which is the state that command is documented to
+        # work in and the state this job used to paper over by writing one.
         run: |
           cd "$RUNNER_TEMP/install"
-          echo "TURNAROUND_PSEUDONYM_SALT=$(openssl rand -hex 16)" > .env
+          rm -f .env
           ./.venv/bin/turnaround-seed --dry-run | tee out.txt
           grep -q "dry run: nothing left this machine" out.txt
+          # Borrowing a salt has to be announced, or a passing dry run reads as
+          # proof that a real `.env` is filled in.
+          grep -q "throwaway" out.txt
 
-      - name: A half-filled .env is refused with a sentence, not a traceback
+      - name: A real seed still refuses a half-filled .env, with a sentence
+        # The pair that matters. This step used to assert that `--dry-run` was
+        # *also* refused, which is how it certified the bug that made the
+        # README's zero-config command fail: it wrote a salt of its own before
+        # every other step, so it only ever tested the workaround. A run that
+        # exports nothing may borrow a salt; a run that exports must not.
         run: |
           cd "$RUNNER_TEMP/install"
           printf 'TURNAROUND_PSEUDONYM_SALT=change-me\n' > .env
           set +e
-          ./.venv/bin/turnaround-seed --dry-run > out.txt 2> err.txt
+          ./.venv/bin/turnaround-seed > out.txt 2> err.txt
           code=$?
           set -e
           test "$code" -eq 2 || { echo "expected exit 2, got $code"; cat err.txt; exit 1; }
           grep -q "TURNAROUND_PSEUDONYM_SALT" err.txt
           ! grep -q "Traceback" err.txt || { echo "a traceback reached the user"; cat err.txt; exit 1; }
+          # And the same half-filled file is fine for a dry run.
+          ./.venv/bin/turnaround-seed --dry-run | tee dry.txt
+          grep -q "dry run: nothing left this machine" dry.txt

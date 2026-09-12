@@ -454,9 +454,9 @@ class TestTheParserHandlesTheShapesPeopleWrite:
         assert os.environ["GRAFANA_SERVICE_ACCOUNT_TOKEN"] == "glsa_abc"
 
     def test_an_exported_line_is_still_a_key(self, clean_env):
-        """``deploy/deploy.sh`` sources this same file with ``set -a``, so a
-        user's ``export`` lines work there. Both readers of one file have to
-        agree about what is in it."""
+        """A ``.env`` is very often also sourced -- ``set -a && . ./.env`` is in
+        this project's own docs -- and ``export KEY=value`` is valid there.
+        Both readers of one file have to agree about what is in it."""
         _write_env(clean_env, "export GRAFANA_URL=https://stack.grafana.net\n")
         load_env()
         assert os.environ["GRAFANA_URL"] == "https://stack.grafana.net"
