@@ -1,10 +1,13 @@
-"""The one shared run path, and the two front ends that present it.
+"""The one shared run path, and the front end that presents it.
 
 ``agent/engine.py`` builds the system, drives the runner under the circuit
-breaker and scores the answer. ``agent/run.py`` turns that into console text and
-an exit code; ``agent/serve.py`` turns the same thing into JSON. These tests
-pin the contract between them, so the CLI and the endpoint cannot drift apart
-the way two copies of the pipeline would.
+breaker and scores the answer; ``agent/run.py`` turns that into console text and
+an exit code. These tests pin the contract between them.
+
+The split was made when there were two front ends and the HTTP one was ~70% a
+copy of the CLI. That service now lives in its own repository, and these tests
+are what let it move: they constrain what ``answer_question`` returns, not who
+is asking.
 
 Nothing here touches Vertex, Grafana or the network: the ADK ``Runner`` is
 replaced with a stub that yields a scripted final event.

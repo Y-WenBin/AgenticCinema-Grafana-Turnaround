@@ -2,9 +2,8 @@
 
 None of these are credentials. They are *reconnaissance*: a stack hostname
 points at a login page and an OTLP ingest endpoint, and a GCP project id is the
-other half of several Google API calls. `agent/serve.py` already refuses to put
-`grafana_url` in an `/ask` response for exactly this reason -- committing the
-same string to a public repo would give it away anyway.
+other half of several Google API calls. Committing either to a public repo
+gives away what no amount of care at runtime can take back.
 
 The test is written as shape rules rather than a blocklist of the specific
 strings that leaked once, so it catches the *next* one too.

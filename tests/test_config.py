@@ -407,7 +407,8 @@ class TestAValueWeCannotUseSaysSo:
         assert "greater than zero" in capsys.readouterr().err
 
     def test_it_is_said_once_not_once_per_request(self, clean_env, monkeypatch, capsys):
-        """``agent/serve.py`` calls ``load_settings()`` per request."""
+        """Anything long-lived resolves settings more than once -- the HTTP
+        service this used to ship with did it per request."""
         monkeypatch.setenv("TURNAROUND_MAX_LLM_CALLS", "lots")
         for _ in range(5):
             _int_env("TURNAROUND_MAX_LLM_CALLS", 40)
